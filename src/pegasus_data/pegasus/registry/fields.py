@@ -1,0 +1,38 @@
+FIELD_REGISTRY = {
+    'SINASC': {
+        'CODMUNNASC': 'support.municipality',
+        'CODMUNRES': 'support.municipality_residence',
+        'DTNASC': 'support.date',
+        'SEXO': 'subgroups.sex',
+        'PESO': 'continuous.birth_weight_g',
+        'APGAR1': 'continuous.apgar_1m',
+        'APGAR5': 'continuous.apgar_5m',
+        'CODANOMAL': 'code_roles.anomaly',
+        'CODANOMAL1': 'annotations.anomaly_slots',
+        'CODANOMAL2': 'annotations.anomaly_slots',
+        'CODANOMAL3': 'annotations.anomaly_slots',
+        'CODANOMAL4': 'annotations.anomaly_slots',
+    },
+    'SIM': {
+        'CODMUNOCOR': 'support.municipality',
+        'CODMUNRES': 'support.municipality_residence',
+        'DTOBITO': 'support.date',
+        'CAUSABAS': 'code_roles.cause_of_death',
+    },
+    'SINAN': {
+        'ID_MN_RESI': 'support.municipality',
+        'MUN_RESI': 'support.municipality',
+        'DT_NOTIFIC': 'support.date',
+        'CS_SEXO': 'subgroups.sex',
+        'ID_AGRAVO': 'code_roles.condition',
+        'AGRAVO': 'code_roles.condition',
+        'CID10': 'code_roles.condition',
+    },
+    'SIH': {
+        'MUNIC_MOV': 'support.municipality',
+        'MUNIC_RES': 'support.municipality_residence',
+        'DT_INTER': 'support.date',
+        'DIAG_PRINC': 'code_roles.diagnosis',
+        'PROC_REA': 'code_roles.procedure',
+    },
+}

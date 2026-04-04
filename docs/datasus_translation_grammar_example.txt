@@ -1,0 +1,19 @@
+# global variable
+$ RACACOR cat raça_cor
+= 1 branca
+= 2 preta
+= 3 amarela
+= 4 parda
+= 5 indigena
+
+# municipality code
+$ CODMUNRES mun município_residência
+> ibge6
+
+# date field
+$ DTOBITO date data_óbito
+> date8
+
+# dataset-scoped override
+@ SIM_DO CAUSABAS code causa_básica
+> cid10
