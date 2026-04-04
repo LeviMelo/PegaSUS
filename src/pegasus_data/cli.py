@@ -3,25 +3,48 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from pathlib import Path
 
-from .common.io import write_json, write_jsonl
+from .common.io import read_jsonl, write_json, write_jsonl
 from .common.logging import configure_logging
 from .datasus.decode.inspect import inspect_dbase_file
 from .datasus.discovery.catalog import build_series_catalog, write_series_catalog
+from .datasus.discovery.docs import build_family_document_registry
 from .datasus.discovery.manifest import parse_manifest_text, read_manifest_jsonl, write_manifest_jsonl
 from .datasus.ftp import DatasusFtpScanner, diff_scan_outputs
-from .datasus.inventory import build_dataset_families, inventory_from_scan_jsonl
-from .datasus.parsers.generic import GenericDatasusDbaseParser
-from .datasus.profile import profile_dbase_file
-from .datasus.translate import parse_translation_grammar_file, translate_field_samples, validate_translation_registry
-from .sidra.catalog.ingest import ingest_by_coverage, ingest_table
+from .datasus.inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
+from .datasus.profile import build_variable_catalog, profile_dbase_file
+from .datasus.translate import (
+    build_translation_bundle,
+    emit_translation_grammar,
+    parse_translation_grammar_file,
+    translate_field_samples,
+    validate_translation_registry,
+)
 from .sidra.catalog.schema import ensure_schema
 from .sidra.catalog.search import SearchArgs, search_tables, show_table
 from .sidra.values import fetch_and_normalize_values_sharded
 
+_DBASE_EXTS = {'.dbf', '.dbc'}
+
 
 def _load_manifest_like(path: str, *, scan_id: str | None = None):
     return read_manifest_jsonl(path) if path.lower().endswith('.jsonl') else parse_manifest_text(path, scan_id=scan_id)
+
+
+def _load_json(path: str):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def _profile_signature_map(profile_jsonl: str | None) -> tuple[dict[str, str], list[dict]]:
+    schema_signatures: dict[str, str] = {}
+    profile_rows: list[dict] = []
+    if profile_jsonl:
+        for row in read_jsonl(profile_jsonl):
+            profile_rows.append(row)
+            if 'path' in row and 'schema_signature' in row:
+                schema_signatures[str(row['path'])] = str(row['schema_signature'])
+    return schema_signatures, profile_rows
 
 
 def _cmd_datasus_manifest(args: argparse.Namespace) -> None:
@@ -60,14 +83,25 @@ def _cmd_datasus_inventory(args: argparse.Namespace) -> None:
 
 def _cmd_datasus_datasets(args: argparse.Namespace) -> None:
     files = inventory_from_scan_jsonl(args.input)
-    schema_signatures: dict[str, str] = {}
-    if args.profile_jsonl:
-        from .common.io import read_jsonl
-        for row in read_jsonl(args.profile_jsonl):
-            schema_signatures[row['path']] = row['schema_signature']
+    schema_signatures, _ = _profile_signature_map(args.profile_jsonl)
     datasets = build_dataset_families(files, schema_signatures=schema_signatures)
     write_json(args.output, [row.to_dict() for row in datasets])
     print(f'wrote {len(datasets)} dataset families -> {args.output}')
+
+
+def _cmd_datasus_family_registry(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    _, profile_rows = _profile_signature_map(args.profile_jsonl)
+    registry = build_family_registry(families, profile_rows=profile_rows)
+    write_json(args.output, [row.to_dict() for row in registry])
+    print(f'wrote {len(registry)} family registry rows -> {args.output}')
+
+
+def _cmd_datasus_doc_registry(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    registry = build_family_document_registry(families, doc_root=args.doc_root, max_chars=args.max_chars)
+    write_json(args.output, [row.to_dict() for row in registry])
+    print(f'wrote {len(registry)} family document rows -> {args.output}')
 
 
 def _cmd_datasus_inspect(args: argparse.Namespace) -> None:
@@ -85,14 +119,12 @@ def _cmd_datasus_profile(args: argparse.Namespace) -> None:
 
 
 def _cmd_datasus_profile_many(args: argparse.Namespace) -> None:
-    from .common.io import read_jsonl
     rows = list(read_jsonl(args.input))
-    parser = GenericDatasusDbaseParser()
     out_rows = []
     count = 0
     for row in rows:
         path = row.get('path') or row.get('full_path')
-        if not path or not parser.detect_file(path):
+        if not path or Path(path).suffix.lower() not in _DBASE_EXTS:
             continue
         try:
             profile = profile_dbase_file(path, sample_rows=args.sample_rows)
@@ -105,6 +137,14 @@ def _cmd_datasus_profile_many(args: argparse.Namespace) -> None:
             break
     write_jsonl(args.output, out_rows)
     print(f'wrote {len(out_rows)} profiles -> {args.output}')
+
+
+def _cmd_datasus_variable_catalog(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families) if args.families else None
+    catalog = build_variable_catalog(profiles, families=families)
+    write_json(args.output, [row.to_dict() for row in catalog])
+    print(f'wrote {len(catalog)} variable catalog rows -> {args.output}')
 
 
 def _cmd_datasus_translate_validate(args: argparse.Namespace) -> None:
@@ -123,16 +163,78 @@ def _cmd_datasus_translate_validate(args: argparse.Namespace) -> None:
 
 def _cmd_datasus_translate_samples(args: argparse.Namespace) -> None:
     registry = parse_translation_grammar_file(args.grammar)
-    profile = json.loads(open(args.profile, 'r', encoding='utf-8').read())
-    scope = args.scope
+    profile = _load_json(args.profile)
     translated = []
     for field in profile['field_profiles']:
-        translated.append(translate_field_samples(field['name'], field.get('samples', []), registry, scope=scope).to_dict())
+        translated.append(translate_field_samples(field['name'], field.get('samples', []), registry, scope=args.scope).to_dict())
     if args.output:
         write_json(args.output, translated)
         print(f'wrote translated samples -> {args.output}')
         return
     print(json.dumps(translated, ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_translate_merge(args: argparse.Namespace) -> None:
+    registries = [parse_translation_grammar_file(path) for path in args.inputs]
+    merged = registries[0]
+    for registry in registries[1:]:
+        merged = merged.merge(registry)
+    report = validate_translation_registry(merged)
+    if report.errors:
+        raise SystemExit('merge produced invalid registry: ' + '; '.join(report.errors))
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output).write_text(emit_translation_grammar(merged), encoding='utf-8')
+    print(f'wrote merged translation grammar -> {args.output}')
+
+
+def _cmd_datasus_translate_coverage(args: argparse.Namespace) -> None:
+    registry = parse_translation_grammar_file(args.grammar)
+    variables = _load_json(args.variable_catalog)
+    families = _load_json(args.families) if args.families else None
+    if args.family_id:
+        if not families:
+            raise SystemExit('--family-id requires --families')
+        family = next((row for row in families if str(row.get('family_id')) == args.family_id), None)
+        if family is None:
+            raise SystemExit(f'family not found: {args.family_id}')
+        family_vars = set(family.get('variables') or [])
+        if not family_vars:
+            family_registry = _load_json(args.family_registry) if args.family_registry else []
+            family_row = next((row for row in family_registry if str(row.get('family_id')) == args.family_id), None)
+            family_vars = set((family_row or {}).get('variables') or [])
+        payload = registry.coverage_for_variables(family_vars, scopes=[args.family_id])
+        payload['family_id'] = args.family_id
+    else:
+        payload = registry.coverage_for_variables([row.get('variable') for row in variables])
+    if args.output:
+        write_json(args.output, payload)
+        print(f'wrote translation coverage -> {args.output}')
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_translate_bundle(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    family = next((row for row in families if str(row.get('family_id')) == args.family_id), None)
+    if family is None:
+        raise SystemExit(f'family not found: {args.family_id}')
+    profile_rows = list(read_jsonl(args.profile_jsonl))
+    variable_catalog = _load_json(args.variable_catalog)
+    document_registry = _load_json(args.doc_registry) if args.doc_registry else None
+    bundle = build_translation_bundle(
+        family,
+        profile_rows,
+        variable_catalog,
+        document_registry=document_registry,
+        max_fields=args.max_fields,
+    )
+    if args.output_json:
+        write_json(args.output_json, bundle.to_dict())
+    Path(args.output_text).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output_text).write_text(bundle.prompt_text, encoding='utf-8')
+    print(f'wrote translation bundle prompt -> {args.output_text}')
+    if args.output_json:
+        print(f'wrote translation bundle json -> {args.output_json}')
 
 
 def _cmd_sidra_db(args: argparse.Namespace) -> None:
@@ -141,6 +243,8 @@ def _cmd_sidra_db(args: argparse.Namespace) -> None:
 
 
 def _cmd_sidra_ingest(args: argparse.Namespace) -> None:
+    from .sidra.catalog.ingest import ingest_table
+
     ensure_schema()
     for table_id in args.table_ids:
         asyncio.run(ingest_table(table_id))
@@ -148,8 +252,16 @@ def _cmd_sidra_ingest(args: argparse.Namespace) -> None:
 
 
 def _cmd_sidra_ingest_coverage(args: argparse.Namespace) -> None:
+    from .sidra.catalog.ingest import ingest_by_coverage
+
     ensure_schema()
-    report = asyncio.run(ingest_by_coverage(args.coverage, subject_contains=args.subject_contains, survey_contains=args.survey_contains, limit=args.limit, concurrency=args.concurrent))
+    report = asyncio.run(ingest_by_coverage(
+        args.coverage,
+        subject_contains=args.subject_contains,
+        survey_contains=args.survey_contains,
+        limit=args.limit,
+        concurrency=args.concurrent,
+    ))
     print(json.dumps({'coverage': report.coverage, 'matched_table_ids': report.matched_table_ids}, ensure_ascii=False, indent=2))
 
 
@@ -217,10 +329,23 @@ def build_parser() -> argparse.ArgumentParser:
     inventory.set_defaults(func=_cmd_datasus_inventory)
 
     datasets = datasus_sub.add_parser('datasets')
-    datasets.add_argument('input', help='Scanner JSONL output')
+    datasets.add_argument('input', help='Inventory JSONL or scan JSONL')
     datasets.add_argument('output')
     datasets.add_argument('--profile-jsonl', default=None)
     datasets.set_defaults(func=_cmd_datasus_datasets)
+
+    family_registry = datasus_sub.add_parser('family-registry')
+    family_registry.add_argument('families')
+    family_registry.add_argument('output')
+    family_registry.add_argument('--profile-jsonl', default=None)
+    family_registry.set_defaults(func=_cmd_datasus_family_registry)
+
+    doc_registry = datasus_sub.add_parser('doc-registry')
+    doc_registry.add_argument('families')
+    doc_registry.add_argument('output')
+    doc_registry.add_argument('--doc-root', required=True)
+    doc_registry.add_argument('--max-chars', type=int, default=4000)
+    doc_registry.set_defaults(func=_cmd_datasus_doc_registry)
 
     catalog = datasus_sub.add_parser('catalog')
     catalog.add_argument('input')
@@ -246,6 +371,12 @@ def build_parser() -> argparse.ArgumentParser:
     profile_many.add_argument('--limit', type=int, default=None)
     profile_many.set_defaults(func=_cmd_datasus_profile_many)
 
+    variable_catalog = datasus_sub.add_parser('variable-catalog')
+    variable_catalog.add_argument('profile_jsonl')
+    variable_catalog.add_argument('output')
+    variable_catalog.add_argument('--families', default=None)
+    variable_catalog.set_defaults(func=_cmd_datasus_variable_catalog)
+
     tval = datasus_sub.add_parser('translate-validate')
     tval.add_argument('input')
     tval.add_argument('--output', default=None)
@@ -258,6 +389,31 @@ def build_parser() -> argparse.ArgumentParser:
     tsamp.add_argument('--scope', default=None)
     tsamp.add_argument('--output', default=None)
     tsamp.set_defaults(func=_cmd_datasus_translate_samples)
+
+    tmerge = datasus_sub.add_parser('translate-merge')
+    tmerge.add_argument('output')
+    tmerge.add_argument('inputs', nargs='+')
+    tmerge.set_defaults(func=_cmd_datasus_translate_merge)
+
+    tcov = datasus_sub.add_parser('translate-coverage')
+    tcov.add_argument('grammar')
+    tcov.add_argument('variable_catalog')
+    tcov.add_argument('--families', default=None)
+    tcov.add_argument('--family-registry', default=None)
+    tcov.add_argument('--family-id', default=None)
+    tcov.add_argument('--output', default=None)
+    tcov.set_defaults(func=_cmd_datasus_translate_coverage)
+
+    tbundle = datasus_sub.add_parser('translate-bundle')
+    tbundle.add_argument('family_id')
+    tbundle.add_argument('families')
+    tbundle.add_argument('profile_jsonl')
+    tbundle.add_argument('variable_catalog')
+    tbundle.add_argument('output_text')
+    tbundle.add_argument('--doc-registry', default=None)
+    tbundle.add_argument('--output-json', default=None)
+    tbundle.add_argument('--max-fields', type=int, default=120)
+    tbundle.set_defaults(func=_cmd_datasus_translate_bundle)
 
     sidra = sub.add_parser('sidra')
     sidra_sub = sidra.add_subparsers(dest='sidra_cmd')
@@ -297,6 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     sidra_values.add_argument('--output', default=None)
     sidra_values.add_argument('--limit', type=int, default=20)
     sidra_values.set_defaults(func=_cmd_sidra_values)
+
     return parser
 
 

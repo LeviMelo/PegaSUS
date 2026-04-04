@@ -1,0 +1,26 @@
+# Compact DATASUS translation grammar example
+# $ = global variable
+# @ = family-scoped override
+# = = categorical mapping
+# > = transformation rules
+# ~ = aliases
+# % = provenance/source tags
+
+$ RACACOR cat raça_cor
+% sinasc_layout sim_manual
+= 1 branca
+= 2 preta
+= 3 amarela
+= 4 parda
+= 5 indigena
+
+$ CODMUNRES mun município_residência
+~ CODMUN CODMUN_RES
+> ibge6
+
+$ DTOBITO date data_óbito
+> date8
+
+@ SIM_DO CAUSABAS code causa_básica
+% sim_diccionario
+> cid10

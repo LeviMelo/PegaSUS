@@ -1,31 +1,20 @@
+"""
+Minimal source registry placeholders.
+
+The active DATASUS workflow is intentionally black-box first: scan, organize,
+profile, and translate before asserting source-specific semantics. These
+entries therefore stay generic until accepted translation/mapping artifacts
+justify stronger canonical commitments.
+"""
+
 SOURCE_REGISTRY = {
-    'SINASC': {
+    'DATASUS_GENERIC': {
         'source_family': 'datasus',
-        'support_role': 'birth_occurrence',
-        'event_type': 'birth',
-        'dataset': 'DN',
-        'code_roles': ['anomaly'],
-    },
-    'SIM': {
-        'source_family': 'datasus',
-        'support_role': 'death_occurrence',
-        'event_type': 'death',
-        'dataset': 'DO',
-        'code_roles': ['cause_of_death', 'associated_cause'],
-    },
-    'SINAN': {
-        'source_family': 'datasus',
-        'support_role': 'notification_residence',
-        'event_type': 'notification',
-        'dataset': 'NOTIFIC',
-        'code_roles': ['condition'],
-    },
-    'SIH': {
-        'source_family': 'datasus',
-        'support_role': 'hospitalization_occurrence',
-        'event_type': 'hospitalization',
-        'dataset': 'AIH',
-        'code_roles': ['diagnosis', 'secondary_diagnosis', 'procedure'],
+        'support_role': None,
+        'event_type': None,
+        'dataset': None,
+        'code_roles': [],
+        'mapping_status': 'translation_driven',
     },
     'SIDRA': {
         'source_family': 'sidra',
@@ -33,5 +22,6 @@ SOURCE_REGISTRY = {
         'event_type': 'aggregate_context',
         'dataset': None,
         'code_roles': [],
+        'mapping_status': 'stable',
     },
 }

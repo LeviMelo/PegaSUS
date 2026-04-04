@@ -19,6 +19,7 @@ class _Builder:
     value_map: dict[str, str]
     rules: list[str]
     aliases: list[str]
+    sources: list[str]
 
     def freeze(self) -> VariableTranslation:
         return VariableTranslation(
@@ -29,6 +30,7 @@ class _Builder:
             value_map=dict(self.value_map),
             rules=list(self.rules),
             aliases=list(self.aliases),
+            sources=list(self.sources),
         )
 
 
@@ -47,7 +49,7 @@ def parse_translation_grammar(text: str) -> TranslationRegistry:
             parts = body.split(maxsplit=2)
             if len(parts) < 3:
                 raise TranslationGrammarError(f'Line {line_no}: global variable line must be "$ VAR KIND LABEL"')
-            current = _Builder(scope='GLOBAL', variable=parts[0], kind=parts[1], label=parts[2], value_map={}, rules=[], aliases=[])
+            current = _Builder(scope='GLOBAL', variable=parts[0], kind=parts[1], label=parts[2], value_map={}, rules=[], aliases=[], sources=[])
             continue
         if head == '@':
             if current is not None:
@@ -55,7 +57,7 @@ def parse_translation_grammar(text: str) -> TranslationRegistry:
             parts = body.split(maxsplit=3)
             if len(parts) < 4:
                 raise TranslationGrammarError(f'Line {line_no}: scoped variable line must be "@ SCOPE VAR KIND LABEL"')
-            current = _Builder(scope=parts[0], variable=parts[1], kind=parts[2], label=parts[3], value_map={}, rules=[], aliases=[])
+            current = _Builder(scope=parts[0], variable=parts[1], kind=parts[2], label=parts[3], value_map={}, rules=[], aliases=[], sources=[])
             continue
         if current is None:
             raise TranslationGrammarError(f'Line {line_no}: mapping/rule line without active variable block')
@@ -68,6 +70,8 @@ def parse_translation_grammar(text: str) -> TranslationRegistry:
             current.rules.extend(token for token in body.split() if token)
         elif head == '~':
             current.aliases.extend(token for token in body.split() if token)
+        elif head == '%':
+            current.sources.extend(token for token in body.split() if token)
         else:
             raise TranslationGrammarError(f'Line {line_no}: unknown directive {head!r}')
     if current is not None:
@@ -77,3 +81,22 @@ def parse_translation_grammar(text: str) -> TranslationRegistry:
 
 def parse_translation_grammar_file(path: str | Path) -> TranslationRegistry:
     return parse_translation_grammar(Path(path).read_text(encoding='utf-8'))
+
+
+def emit_translation_grammar(registry: TranslationRegistry) -> str:
+    lines: list[str] = []
+    for entry in sorted(registry.entries, key=lambda item: (item.scope.upper(), item.variable.upper())):
+        if entry.scope.upper() == 'GLOBAL':
+            lines.append(f'$ {entry.variable} {entry.kind} {entry.label}')
+        else:
+            lines.append(f'@ {entry.scope} {entry.variable} {entry.kind} {entry.label}')
+        if entry.aliases:
+            lines.append('~ ' + ' '.join(entry.aliases))
+        if entry.rules:
+            lines.append('> ' + ' '.join(entry.rules))
+        if entry.sources:
+            lines.append('% ' + ' '.join(entry.sources))
+        for raw, label in sorted(entry.value_map.items()):
+            lines.append(f'= {raw} {label}')
+        lines.append('')
+    return '\n'.join(lines).rstrip() + ('\n' if lines else '')

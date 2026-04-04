@@ -1,0 +1,4946 @@
+Project structure for '/c/Users/Galaxy/LEVI/projects/PegaSUS/src':
+===============================================================================
+  pegasus_data/__init__.py
+  pegasus_data/cli.py
+  pegasus_data/common/__init__.py
+  pegasus_data/common/hashing.py
+  pegasus_data/common/io.py
+  pegasus_data/common/logging.py
+  pegasus_data/common/storage.py
+  pegasus_data/common/text.py
+  pegasus_data/config/__init__.py
+  pegasus_data/config/settings.py
+  pegasus_data/datasus/__init__.py
+  pegasus_data/datasus/decode/__init__.py
+  pegasus_data/datasus/decode/dbase.py
+  pegasus_data/datasus/decode/inspect.py
+  pegasus_data/datasus/discovery/__init__.py
+  pegasus_data/datasus/discovery/catalog.py
+  pegasus_data/datasus/discovery/docs.py
+  pegasus_data/datasus/discovery/heuristics.py
+  pegasus_data/datasus/discovery/manifest.py
+  pegasus_data/datasus/discovery/scanner.py
+  pegasus_data/datasus/fetch/__init__.py
+  pegasus_data/datasus/fetch/downloader.py
+  pegasus_data/datasus/fetch/planner.py
+  pegasus_data/datasus/ftp/__init__.py
+  pegasus_data/datasus/ftp/diff.py
+  pegasus_data/datasus/ftp/scanner.py
+  pegasus_data/datasus/ftp/state.py
+  pegasus_data/datasus/inventory/__init__.py
+  pegasus_data/datasus/inventory/datasets.py
+  pegasus_data/datasus/inventory/files.py
+  pegasus_data/datasus/inventory/registry.py
+  pegasus_data/datasus/models.py
+  pegasus_data/datasus/parsers/__init__.py
+  pegasus_data/datasus/parsers/base.py
+  pegasus_data/datasus/parsers/dbase.py
+  pegasus_data/datasus/parsers/generic.py
+  pegasus_data/datasus/profile/__init__.py
+  pegasus_data/datasus/profile/fields.py
+  pegasus_data/datasus/profile/tables.py
+  pegasus_data/datasus/profile/variables.py
+  pegasus_data/datasus/translate/__init__.py
+  pegasus_data/datasus/translate/apply.py
+  pegasus_data/datasus/translate/bundle.py
+  pegasus_data/datasus/translate/grammar.py
+  pegasus_data/datasus/translate/registry.py
+  pegasus_data/datasus/translate/validate.py
+  pegasus_data/pegasus/__init__.py
+  pegasus_data/pegasus/canonical/__init__.py
+  pegasus_data/pegasus/canonical/schema.py
+  pegasus_data/pegasus/canonical/validators.py
+  pegasus_data/pegasus/compiler/__init__.py
+  pegasus_data/pegasus/compiler/code_counts.py
+  pegasus_data/pegasus/compiler/counts.py
+  pegasus_data/pegasus/compiler/rates.py
+  pegasus_data/pegasus/compiler/thresholds.py
+  pegasus_data/pegasus/registry/__init__.py
+  pegasus_data/pegasus/registry/codes.py
+  pegasus_data/pegasus/registry/fields.py
+  pegasus_data/pegasus/registry/sources.py
+  pegasus_data/pegasus/registry/support.py
+  pegasus_data/sidra/__init__.py
+  pegasus_data/sidra/catalog/__init__.py
+  pegasus_data/sidra/catalog/api.py
+  pegasus_data/sidra/catalog/coverage.py
+  pegasus_data/sidra/catalog/db.py
+  pegasus_data/sidra/catalog/ingest.py
+  pegasus_data/sidra/catalog/links.py
+  pegasus_data/sidra/catalog/schema.py
+  pegasus_data/sidra/catalog/search.py
+  pegasus_data/sidra/catalog/where_expr.py
+  pegasus_data/sidra/values/__init__.py
+  pegasus_data/sidra/values/canonical.py
+  pegasus_data/sidra/values/loader.py
+  pegasus_data/sidra/values/normalize.py
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/inventory/registry.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class FamilyRegistryEntry:
+    family_id: str
+    system_guess: str | None
+    series_prefix: str | None
+    partition_type: str
+    date_format: str | None
+    time_range_display: str | None
+    file_count: int
+    source_paths: list[str]
+    schema_signatures: list[str]
+    variable_count: int
+    variables: list[str]
+    associated_docs: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def build_family_registry(
+    families: list[dict[str, Any]],
+    profile_rows: list[dict[str, Any]] | None = None,
+) -> list[FamilyRegistryEntry]:
+    profile_rows = profile_rows or []
+    variables_by_path: dict[str, set[str]] = {}
+    for row in profile_rows:
+        path = str(row.get('path') or '')
+        field_names = {
+            str(field.get('name') or '').upper()
+            for field in row.get('field_profiles') or []
+            if str(field.get('name') or '').strip()
+        }
+        variables_by_path[path] = field_names
+
+    out: list[FamilyRegistryEntry] = []
+    for family in families:
+        paths = [str(path) for path in family.get('files', []) or []]
+        family_vars: set[str] = set()
+        for path in paths:
+            family_vars.update(variables_by_path.get(path, set()))
+        out.append(FamilyRegistryEntry(
+            family_id=str(family.get('family_id') or ''),
+            system_guess=family.get('system_guess'),
+            series_prefix=family.get('series_prefix'),
+            partition_type=str(family.get('partition_type') or 'Unknown'),
+            date_format=family.get('date_format'),
+            time_range_display=family.get('time_range_display'),
+            file_count=int(family.get('file_count') or 0),
+            source_paths=list(family.get('source_paths') or []),
+            schema_signatures=list(family.get('schema_signatures') or []),
+            variable_count=len(family_vars),
+            variables=sorted(family_vars),
+            associated_docs=list(family.get('associated_docs') or []),
+        ))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/variables.py
+###############################################################################
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class VariableCatalogEntry:
+    variable: str
+    family_count: int
+    file_count: int
+    primitive_types: list[str]
+    scopes: list[str]
+    samples: list[str]
+    signals: list[str]
+    dataset_overrides: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _family_index(families: list[dict[str, Any]]) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for family in families:
+        family_id = str(family.get('family_id') or '')
+        for path in family.get('files', []) or []:
+            out.setdefault(str(path), set()).add(family_id)
+    return out
+
+
+def build_variable_catalog(
+    profile_rows: list[dict[str, Any]],
+    *,
+    families: list[dict[str, Any]] | None = None,
+    sample_limit: int = 12,
+) -> list[VariableCatalogEntry]:
+    path_to_families = _family_index(families or [])
+    bucket: dict[str, dict[str, Any]] = {}
+
+    for row in profile_rows:
+        path = str(row.get('path') or '')
+        families_for_path = path_to_families.get(path) or set()
+        for field in row.get('field_profiles') or []:
+            variable = str(field.get('name') or '').upper()
+            if not variable:
+                continue
+            slot = bucket.setdefault(variable, {
+                'file_paths': set(),
+                'family_ids': set(),
+                'primitive_types': Counter(),
+                'samples': Counter(),
+                'signals': Counter(),
+                'dataset_overrides': set(),
+            })
+            slot['file_paths'].add(path)
+            slot['family_ids'].update(families_for_path)
+            slot['primitive_types'][str(field.get('primitive_type') or 'unknown')] += 1
+            for sample in field.get('samples') or []:
+                text = str(sample).strip()
+                if text:
+                    slot['samples'][text] += 1
+            for signal in field.get('signals') or []:
+                slot['signals'][str(signal)] += 1
+            for family_id in families_for_path:
+                slot['dataset_overrides'].add(family_id)
+
+    out: list[VariableCatalogEntry] = []
+    for variable in sorted(bucket):
+        slot = bucket[variable]
+        out.append(VariableCatalogEntry(
+            variable=variable,
+            family_count=len(slot['family_ids']),
+            file_count=len(slot['file_paths']),
+            primitive_types=[name for name, _ in slot['primitive_types'].most_common()],
+            scopes=sorted(slot['family_ids']),
+            samples=[name for name, _ in slot['samples'].most_common(sample_limit)],
+            signals=[name for name, _ in slot['signals'].most_common()],
+            dataset_overrides=sorted(slot['dataset_overrides']),
+        ))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/bundle.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class TranslationBundle:
+    family_id: str
+    prompt_text: str
+    variables: list[dict[str, Any]]
+    docs: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def build_translation_bundle(
+    family: dict[str, Any],
+    profile_rows: list[dict[str, Any]],
+    variable_catalog: list[dict[str, Any]],
+    *,
+    max_fields: int = 120,
+) -> TranslationBundle:
+    profile_map = {str(row.get('path') or ''): row for row in profile_rows}
+    catalog_map = {str(row.get('variable') or '').upper(): row for row in variable_catalog}
+    variables: list[dict[str, Any]] = []
+    for path in family.get('files', []) or []:
+        row = profile_map.get(str(path))
+        if not row:
+            continue
+        for field in row.get('field_profiles', []) or []:
+            name = str(field.get('name') or '').upper()
+            merged = dict(field)
+            if name in catalog_map:
+                merged['catalog'] = catalog_map[name]
+            merged['path'] = str(path)
+            variables.append(merged)
+
+    variables.sort(key=lambda item: (-(item.get('catalog') or {}).get('family_count', 0), str(item.get('name') or '')))
+    variables = variables[:max_fields]
+
+    lines: list[str] = [
+        'TASK: produce compact translation grammar blocks for this DATASUS dataset family.',
+        'OUTPUT ONLY grammar lines using directives: $, @, =, >, ~, %.',
+        'Prefer GLOBAL entries for shared variables. Use @ only for real family-specific overrides.',
+        'Kinds: cat date mun uf num txt code id flag unknown',
+        'Rules available: ibge6 ibge7 cid10 date8 date6 upper stripdigits',
+        '',
+        f'FAMILY {family.get("family_id")}',
+        f'SYSTEM {family.get("system_guess") or "UNKNOWN"}',
+        f'PREFIX {family.get("series_prefix") or "UNKNOWN"}',
+        f'FILES {family.get("file_count") or 0}',
+    ]
+    if family.get('time_range_display'):
+        lines.append(f'TIME {family.get("time_range_display")}')
+    lines.append('')
+    docs = family.get('associated_docs') or []
+    if docs:
+        lines.append('DOCS')
+        for doc in docs[:12]:
+            url = doc.get('url') or ''
+            score = doc.get('score')
+            lines.append(f'- {score} {url}'.rstrip())
+        lines.append('')
+    lines.append('FIELDS')
+    for item in variables:
+        name = str(item.get('name') or '')
+        primitive = str(item.get('primitive_type') or 'unknown')
+        samples = ', '.join((item.get('samples') or [])[:6])
+        shared = (item.get('catalog') or {}).get('family_count', 0)
+        signals = ','.join((item.get('signals') or [])[:4])
+        lines.append(f'- {name} | {primitive} | shared={shared} | sig={signals} | samp={samples}')
+    lines.extend(['', 'Return grammar only.'])
+
+    return TranslationBundle(
+        family_id=str(family.get('family_id') or ''),
+        prompt_text='\n'.join(lines),
+        variables=variables,
+        docs=list(docs),
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/__init__.py
+###############################################################################
+"""PegaSUS data substrate."""
+
+__all__ = ["__version__"]
+__version__ = "0.1.0"
+
+
+
+###############################################################################
+### FILE: pegasus_data/cli.py
+###############################################################################
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from pathlib import Path
+
+from .common.io import read_jsonl, write_json, write_jsonl
+from .common.logging import configure_logging
+from .datasus.decode.inspect import inspect_dbase_file
+from .datasus.discovery.catalog import build_series_catalog, write_series_catalog
+from .datasus.discovery.manifest import parse_manifest_text, read_manifest_jsonl, write_manifest_jsonl
+from .datasus.ftp import DatasusFtpScanner, diff_scan_outputs
+from .datasus.inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
+from .datasus.profile import build_variable_catalog, profile_dbase_file
+from .datasus.translate import (
+    build_translation_bundle,
+    emit_translation_grammar,
+    parse_translation_grammar_file,
+    translate_field_samples,
+    validate_translation_registry,
+)
+from .sidra.catalog.schema import ensure_schema
+from .sidra.catalog.search import SearchArgs, search_tables, show_table
+from .sidra.values import fetch_and_normalize_values_sharded
+
+_DBASE_EXTS = {'.dbf', '.dbc'}
+
+
+def _load_manifest_like(path: str, *, scan_id: str | None = None):
+    return read_manifest_jsonl(path) if path.lower().endswith('.jsonl') else parse_manifest_text(path, scan_id=scan_id)
+
+
+def _load_json(path: str):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def _profile_signature_map(profile_jsonl: str | None) -> tuple[dict[str, str], list[dict]]:
+    schema_signatures: dict[str, str] = {}
+    profile_rows: list[dict] = []
+    if profile_jsonl:
+        for row in read_jsonl(profile_jsonl):
+            profile_rows.append(row)
+            if 'path' in row and 'schema_signature' in row:
+                schema_signatures[str(row['path'])] = str(row['schema_signature'])
+    return schema_signatures, profile_rows
+
+
+def _cmd_datasus_manifest(args: argparse.Namespace) -> None:
+    rows = parse_manifest_text(args.input, scan_id=args.scan_id)
+    write_manifest_jsonl(args.output, rows)
+    print(f'parsed {len(rows)} manifest rows -> {args.output}')
+
+
+def _cmd_datasus_catalog(args: argparse.Namespace) -> None:
+    rows = _load_manifest_like(args.input, scan_id=args.scan_id)
+    catalog = build_series_catalog(rows)
+    write_series_catalog(args.output, catalog)
+    print(f'built {len(catalog)} series catalog rows -> {args.output}')
+
+
+def _cmd_datasus_scan(args: argparse.Namespace) -> None:
+    scanner = DatasusFtpScanner(connections=args.connections)
+    state = scanner.scan_to_jsonl(output_path=args.output, checkpoint_path=args.checkpoint, append=not args.replace)
+    print(json.dumps(state.to_dict(), ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_scan_diff(args: argparse.Namespace) -> None:
+    diff = diff_scan_outputs(args.old, args.new)
+    if args.output:
+        write_json(args.output, diff.to_dict())
+        print(f'wrote diff -> {args.output}')
+        return
+    print(json.dumps(diff.to_dict(), ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_inventory(args: argparse.Namespace) -> None:
+    files = inventory_from_scan_jsonl(args.input)
+    write_jsonl(args.output, (item.to_dict() for item in files))
+    print(f'wrote {len(files)} inventory file rows -> {args.output}')
+
+
+def _cmd_datasus_datasets(args: argparse.Namespace) -> None:
+    files = inventory_from_scan_jsonl(args.input)
+    schema_signatures, _ = _profile_signature_map(args.profile_jsonl)
+    datasets = build_dataset_families(files, schema_signatures=schema_signatures)
+    write_json(args.output, [row.to_dict() for row in datasets])
+    print(f'wrote {len(datasets)} dataset families -> {args.output}')
+
+
+def _cmd_datasus_family_registry(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    _, profile_rows = _profile_signature_map(args.profile_jsonl)
+    registry = build_family_registry(families, profile_rows=profile_rows)
+    write_json(args.output, [row.to_dict() for row in registry])
+    print(f'wrote {len(registry)} family registry rows -> {args.output}')
+
+
+def _cmd_datasus_inspect(args: argparse.Namespace) -> None:
+    preview = inspect_dbase_file(args.path, sample_rows=args.rows)
+    print(json.dumps(preview.to_dict(), ensure_ascii=False, indent=2, default=str))
+
+
+def _cmd_datasus_profile(args: argparse.Namespace) -> None:
+    profile = profile_dbase_file(args.path, sample_rows=args.sample_rows)
+    if args.output:
+        write_json(args.output, profile.to_dict())
+        print(f'wrote profile -> {args.output}')
+        return
+    print(json.dumps(profile.to_dict(), ensure_ascii=False, indent=2, default=str))
+
+
+def _cmd_datasus_profile_many(args: argparse.Namespace) -> None:
+    rows = list(read_jsonl(args.input))
+    out_rows = []
+    count = 0
+    for row in rows:
+        path = row.get('path') or row.get('full_path')
+        if not path or Path(path).suffix.lower() not in _DBASE_EXTS:
+            continue
+        try:
+            profile = profile_dbase_file(path, sample_rows=args.sample_rows)
+        except Exception as exc:
+            out_rows.append({'path': path, 'error': str(exc)})
+            continue
+        out_rows.append(profile.to_dict())
+        count += 1
+        if args.limit and count >= args.limit:
+            break
+    write_jsonl(args.output, out_rows)
+    print(f'wrote {len(out_rows)} profiles -> {args.output}')
+
+
+def _cmd_datasus_variable_catalog(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families) if args.families else None
+    catalog = build_variable_catalog(profiles, families=families)
+    write_json(args.output, [row.to_dict() for row in catalog])
+    print(f'wrote {len(catalog)} variable catalog rows -> {args.output}')
+
+
+def _cmd_datasus_translate_validate(args: argparse.Namespace) -> None:
+    registry = parse_translation_grammar_file(args.input)
+    report = validate_translation_registry(registry)
+    payload = {
+        'validation': report.to_dict(),
+        'entries': registry.to_dict() if args.dump_entries else None,
+    }
+    if args.output:
+        write_json(args.output, payload)
+        print(f'wrote translation validation -> {args.output}')
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_translate_samples(args: argparse.Namespace) -> None:
+    registry = parse_translation_grammar_file(args.grammar)
+    profile = _load_json(args.profile)
+    translated = []
+    for field in profile['field_profiles']:
+        translated.append(translate_field_samples(field['name'], field.get('samples', []), registry, scope=args.scope).to_dict())
+    if args.output:
+        write_json(args.output, translated)
+        print(f'wrote translated samples -> {args.output}')
+        return
+    print(json.dumps(translated, ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_translate_merge(args: argparse.Namespace) -> None:
+    registries = [parse_translation_grammar_file(path) for path in args.inputs]
+    merged = registries[0]
+    for registry in registries[1:]:
+        merged = merged.merge(registry)
+    report = validate_translation_registry(merged)
+    if report.errors:
+        raise SystemExit('merge produced invalid registry: ' + '; '.join(report.errors))
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output).write_text(emit_translation_grammar(merged), encoding='utf-8')
+    print(f'wrote merged translation grammar -> {args.output}')
+
+
+def _cmd_datasus_translate_coverage(args: argparse.Namespace) -> None:
+    registry = parse_translation_grammar_file(args.grammar)
+    variables = _load_json(args.variable_catalog)
+    families = _load_json(args.families) if args.families else None
+    if args.family_id:
+        if not families:
+            raise SystemExit('--family-id requires --families')
+        family = next((row for row in families if str(row.get('family_id')) == args.family_id), None)
+        if family is None:
+            raise SystemExit(f'family not found: {args.family_id}')
+        family_vars = set(family.get('variables') or [])
+        if not family_vars:
+            family_registry = _load_json(args.family_registry) if args.family_registry else []
+            family_row = next((row for row in family_registry if str(row.get('family_id')) == args.family_id), None)
+            family_vars = set((family_row or {}).get('variables') or [])
+        payload = registry.coverage_for_variables(family_vars, scopes=[args.family_id])
+        payload['family_id'] = args.family_id
+    else:
+        payload = registry.coverage_for_variables([row.get('variable') for row in variables])
+    if args.output:
+        write_json(args.output, payload)
+        print(f'wrote translation coverage -> {args.output}')
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _cmd_datasus_translate_bundle(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    family = next((row for row in families if str(row.get('family_id')) == args.family_id), None)
+    if family is None:
+        raise SystemExit(f'family not found: {args.family_id}')
+    profile_rows = list(read_jsonl(args.profile_jsonl))
+    variable_catalog = _load_json(args.variable_catalog)
+    bundle = build_translation_bundle(family, profile_rows, variable_catalog, max_fields=args.max_fields)
+    if args.output_json:
+        write_json(args.output_json, bundle.to_dict())
+    Path(args.output_text).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output_text).write_text(bundle.prompt_text, encoding='utf-8')
+    print(f'wrote translation bundle prompt -> {args.output_text}')
+    if args.output_json:
+        print(f'wrote translation bundle json -> {args.output_json}')
+
+
+def _cmd_sidra_db(args: argparse.Namespace) -> None:
+    ensure_schema()
+    print('SIDRA catalog schema ensured')
+
+
+def _cmd_sidra_ingest(args: argparse.Namespace) -> None:
+    from .sidra.catalog.ingest import ingest_table
+
+    ensure_schema()
+    for table_id in args.table_ids:
+        asyncio.run(ingest_table(table_id))
+        print(f'ingested {table_id}')
+
+
+def _cmd_sidra_ingest_coverage(args: argparse.Namespace) -> None:
+    from .sidra.catalog.ingest import ingest_by_coverage
+
+    ensure_schema()
+    report = asyncio.run(ingest_by_coverage(
+        args.coverage,
+        subject_contains=args.subject_contains,
+        survey_contains=args.survey_contains,
+        limit=args.limit,
+        concurrency=args.concurrent,
+    ))
+    print(json.dumps({'coverage': report.coverage, 'matched_table_ids': report.matched_table_ids}, ensure_ascii=False, indent=2))
+
+
+def _cmd_sidra_search(args: argparse.Namespace) -> None:
+    ensure_schema()
+    hits = search_tables(SearchArgs(q=args.q, limit=args.limit))
+    print(json.dumps([hit.__dict__ for hit in hits], ensure_ascii=False, indent=2))
+
+
+def _cmd_sidra_show(args: argparse.Namespace) -> None:
+    ensure_schema()
+    print(json.dumps(show_table(args.table_id), ensure_ascii=False, indent=2))
+
+
+def _cmd_sidra_values(args: argparse.Namespace) -> None:
+    ensure_schema()
+    periods = [item.strip() for item in args.periods.split(',') if item.strip()]
+    localities = [item.strip() for item in args.locality_ids.split(',') if item.strip()]
+    rows = asyncio.run(fetch_and_normalize_values_sharded(
+        aggregate_id=args.aggregate_id,
+        variable_id=args.variable_id,
+        periods=periods,
+        level=args.level,
+        locality_ids=localities,
+        classification=args.classification,
+        view=args.view,
+    ))
+    payload = [row.to_dict() for row in rows]
+    if args.output:
+        write_jsonl(args.output, payload)
+        print(f'wrote {len(payload)} normalized SIDRA value rows -> {args.output}')
+        return
+    print(json.dumps(payload[: args.limit], ensure_ascii=False, indent=2))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog='pegasus-data')
+    sub = parser.add_subparsers(dest='cmd')
+
+    datasus = sub.add_parser('datasus')
+    datasus_sub = datasus.add_subparsers(dest='datasus_cmd')
+
+    manifest = datasus_sub.add_parser('manifest')
+    manifest.add_argument('input')
+    manifest.add_argument('output')
+    manifest.add_argument('--scan-id', default=None)
+    manifest.set_defaults(func=_cmd_datasus_manifest)
+
+    scan = datasus_sub.add_parser('scan')
+    scan.add_argument('output')
+    scan.add_argument('--checkpoint', default=None)
+    scan.add_argument('--connections', type=int, default=8)
+    scan.add_argument('--replace', action='store_true')
+    scan.set_defaults(func=_cmd_datasus_scan)
+
+    scan_diff = datasus_sub.add_parser('scan-diff')
+    scan_diff.add_argument('old')
+    scan_diff.add_argument('new')
+    scan_diff.add_argument('--output', default=None)
+    scan_diff.set_defaults(func=_cmd_datasus_scan_diff)
+
+    inventory = datasus_sub.add_parser('inventory')
+    inventory.add_argument('input', help='Scanner JSONL output')
+    inventory.add_argument('output')
+    inventory.set_defaults(func=_cmd_datasus_inventory)
+
+    datasets = datasus_sub.add_parser('datasets')
+    datasets.add_argument('input', help='Inventory JSONL or scan JSONL')
+    datasets.add_argument('output')
+    datasets.add_argument('--profile-jsonl', default=None)
+    datasets.set_defaults(func=_cmd_datasus_datasets)
+
+    family_registry = datasus_sub.add_parser('family-registry')
+    family_registry.add_argument('families')
+    family_registry.add_argument('output')
+    family_registry.add_argument('--profile-jsonl', default=None)
+    family_registry.set_defaults(func=_cmd_datasus_family_registry)
+
+    catalog = datasus_sub.add_parser('catalog')
+    catalog.add_argument('input')
+    catalog.add_argument('output')
+    catalog.add_argument('--scan-id', default=None)
+    catalog.set_defaults(func=_cmd_datasus_catalog)
+
+    inspect = datasus_sub.add_parser('inspect-file')
+    inspect.add_argument('path')
+    inspect.add_argument('--rows', type=int, default=5)
+    inspect.set_defaults(func=_cmd_datasus_inspect)
+
+    profile = datasus_sub.add_parser('profile-file')
+    profile.add_argument('path')
+    profile.add_argument('--sample-rows', type=int, default=500)
+    profile.add_argument('--output', default=None)
+    profile.set_defaults(func=_cmd_datasus_profile)
+
+    profile_many = datasus_sub.add_parser('profile-many')
+    profile_many.add_argument('input', help='Inventory JSONL or scan JSONL')
+    profile_many.add_argument('output')
+    profile_many.add_argument('--sample-rows', type=int, default=500)
+    profile_many.add_argument('--limit', type=int, default=None)
+    profile_many.set_defaults(func=_cmd_datasus_profile_many)
+
+    variable_catalog = datasus_sub.add_parser('variable-catalog')
+    variable_catalog.add_argument('profile_jsonl')
+    variable_catalog.add_argument('output')
+    variable_catalog.add_argument('--families', default=None)
+    variable_catalog.set_defaults(func=_cmd_datasus_variable_catalog)
+
+    tval = datasus_sub.add_parser('translate-validate')
+    tval.add_argument('input')
+    tval.add_argument('--output', default=None)
+    tval.add_argument('--dump-entries', action='store_true')
+    tval.set_defaults(func=_cmd_datasus_translate_validate)
+
+    tsamp = datasus_sub.add_parser('translate-samples')
+    tsamp.add_argument('grammar')
+    tsamp.add_argument('profile')
+    tsamp.add_argument('--scope', default=None)
+    tsamp.add_argument('--output', default=None)
+    tsamp.set_defaults(func=_cmd_datasus_translate_samples)
+
+    tmerge = datasus_sub.add_parser('translate-merge')
+    tmerge.add_argument('output')
+    tmerge.add_argument('inputs', nargs='+')
+    tmerge.set_defaults(func=_cmd_datasus_translate_merge)
+
+    tcov = datasus_sub.add_parser('translate-coverage')
+    tcov.add_argument('grammar')
+    tcov.add_argument('variable_catalog')
+    tcov.add_argument('--families', default=None)
+    tcov.add_argument('--family-registry', default=None)
+    tcov.add_argument('--family-id', default=None)
+    tcov.add_argument('--output', default=None)
+    tcov.set_defaults(func=_cmd_datasus_translate_coverage)
+
+    tbundle = datasus_sub.add_parser('translate-bundle')
+    tbundle.add_argument('family_id')
+    tbundle.add_argument('families')
+    tbundle.add_argument('profile_jsonl')
+    tbundle.add_argument('variable_catalog')
+    tbundle.add_argument('output_text')
+    tbundle.add_argument('--output-json', default=None)
+    tbundle.add_argument('--max-fields', type=int, default=120)
+    tbundle.set_defaults(func=_cmd_datasus_translate_bundle)
+
+    sidra = sub.add_parser('sidra')
+    sidra_sub = sidra.add_subparsers(dest='sidra_cmd')
+
+    sidra_db = sidra_sub.add_parser('db')
+    sidra_db.set_defaults(func=_cmd_sidra_db)
+
+    sidra_ingest = sidra_sub.add_parser('ingest')
+    sidra_ingest.add_argument('table_ids', type=int, nargs='+')
+    sidra_ingest.set_defaults(func=_cmd_sidra_ingest)
+
+    sidra_cov = sidra_sub.add_parser('ingest-coverage')
+    sidra_cov.add_argument('--coverage', required=True)
+    sidra_cov.add_argument('--subject-contains', default=None)
+    sidra_cov.add_argument('--survey-contains', default=None)
+    sidra_cov.add_argument('--limit', type=int, default=None)
+    sidra_cov.add_argument('--concurrent', type=int, default=4)
+    sidra_cov.set_defaults(func=_cmd_sidra_ingest_coverage)
+
+    sidra_search = sidra_sub.add_parser('search')
+    sidra_search.add_argument('--q', required=True)
+    sidra_search.add_argument('--limit', type=int, default=20)
+    sidra_search.set_defaults(func=_cmd_sidra_search)
+
+    sidra_show = sidra_sub.add_parser('show')
+    sidra_show.add_argument('table_id', type=int)
+    sidra_show.set_defaults(func=_cmd_sidra_show)
+
+    sidra_values = sidra_sub.add_parser('values')
+    sidra_values.add_argument('--aggregate-id', type=int, required=True)
+    sidra_values.add_argument('--variable-id', required=True)
+    sidra_values.add_argument('--periods', required=True, help='Comma-separated period ids')
+    sidra_values.add_argument('--level', required=True, help='Territorial level, e.g. N6')
+    sidra_values.add_argument('--locality-ids', required=True, help='Comma-separated locality ids')
+    sidra_values.add_argument('--classification', default=None)
+    sidra_values.add_argument('--view', default='flat')
+    sidra_values.add_argument('--output', default=None)
+    sidra_values.add_argument('--limit', type=int, default=20)
+    sidra_values.set_defaults(func=_cmd_sidra_values)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    configure_logging()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not hasattr(args, 'func'):
+        parser.print_help()
+        return
+    args.func(args)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/__init__.py
+###############################################################################
+from .hashing import sha256_file, sha256_text
+from .storage import ensure_parent, ensure_directory
+
+__all__ = ["sha256_file", "sha256_text", "ensure_parent", "ensure_directory"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/hashing.py
+###############################################################################
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: str | Path, *, chunk_size: int = 1 << 20) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/io.py
+###############################################################################
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+from typing import Iterable, Iterator, Mapping, Any
+
+
+def read_text_lines(path: str | Path) -> Iterator[str]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                yield line
+
+
+def write_json(path: str | Path, payload: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def write_jsonl(path: str | Path, rows: Iterable[Mapping[str, Any]]) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
+
+
+def read_jsonl(path: str | Path) -> Iterator[dict[str, Any]]:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def write_csv(path: str | Path, rows: Iterable[Mapping[str, Any]]) -> None:
+    iterator = iter(rows)
+    first = next(iterator, None)
+    if first is None:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(first.keys()))
+        writer.writeheader()
+        writer.writerow(first)
+        for row in iterator:
+            writer.writerow(row)
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/logging.py
+###############################################################################
+from __future__ import annotations
+
+import logging
+
+
+_LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    logging.basicConfig(level=level, format=_LOG_FORMAT)
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/storage.py
+###############################################################################
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def ensure_parent(path: str | Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def ensure_directory(path: str | Path) -> Path:
+    target = Path(path)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+
+###############################################################################
+### FILE: pegasus_data/common/text.py
+###############################################################################
+from __future__ import annotations
+
+import re
+import unicodedata
+
+_WS = re.compile(r"\s+")
+_PUNCT = re.compile(r"[^\w\s-]", re.UNICODE)
+
+
+def normalize_basic(text: str | None) -> str:
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower().replace(" ", " ")
+    text = _WS.sub(" ", text).strip()
+    text = _PUNCT.sub(" ", text)
+    text = _WS.sub(" ", text).strip()
+    text = re.sub(r"\s*-\s*", "-", text)
+    text = _WS.sub(" ", text).strip()
+    return text
+
+
+
+###############################################################################
+### FILE: pegasus_data/config/__init__.py
+###############################################################################
+from .settings import Settings, get_settings
+
+__all__ = ["Settings", "get_settings"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/config/settings.py
+###############################################################################
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Settings:
+    project_root: Path = Path.cwd()
+    data_root: Path = Path("data")
+    datasus_ftp_host: str = "ftp.datasus.gov.br"
+    datasus_ftp_base_path: str = "/dissemin/publicos"
+    datasus_scan_timeout_seconds: float = 30.0
+    datasus_download_timeout_seconds: float = 60.0
+    datasus_scan_connections: int = 8
+    datasus_default_encoding: str = "latin1"
+    datasus_download_root: Path = Path("data/raw/datasus/ftp")
+    sidra_base_url: str = "https://servicodados.ibge.gov.br/api/v3/agregados"
+    sidra_request_timeout_seconds: float = 30.0
+    sidra_request_retries: int = 3
+    sidra_max_connections: int = 16
+    sidra_concurrent_requests: int = 4
+    sidra_pause_seconds: float = 0.15
+    sidra_value_locality_chunk_size: int = 25
+    sidra_value_period_chunk_size: int = 12
+    sidra_catalog_db_path: Path = Path("data/cache/sidra_catalog.sqlite3")
+    sidra_value_output_root: Path = Path("data/compiled/sidra")
+    user_agent: str = "pegasus-data/0.2"
+
+
+def _env(name: str) -> str | None:
+    for candidate in (name, name.upper(), name.lower()):
+        if candidate in os.environ:
+            return os.environ[candidate]
+    return None
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _env(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = _env(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    root = Path(_env("PEGASUS_DATA_PROJECT_ROOT") or Path.cwd())
+    data_root = Path(_env("PEGASUS_DATA_DATA_ROOT") or root / "data")
+    return Settings(
+        project_root=root,
+        data_root=data_root,
+        datasus_scan_connections=_env_int("PEGASUS_DATA_DATASUS_SCAN_CONNECTIONS", 8),
+        datasus_scan_timeout_seconds=_env_float("PEGASUS_DATA_DATASUS_SCAN_TIMEOUT_SECONDS", 30.0),
+        datasus_download_timeout_seconds=_env_float("PEGASUS_DATA_DATASUS_DOWNLOAD_TIMEOUT_SECONDS", 60.0),
+        datasus_default_encoding=_env("PEGASUS_DATA_DATASUS_DEFAULT_ENCODING") or "latin1",
+        datasus_download_root=Path(_env("PEGASUS_DATA_DATASUS_DOWNLOAD_ROOT") or data_root / "raw" / "datasus" / "ftp"),
+        sidra_request_timeout_seconds=_env_float("PEGASUS_DATA_SIDRA_REQUEST_TIMEOUT_SECONDS", 30.0),
+        sidra_request_retries=_env_int("PEGASUS_DATA_SIDRA_REQUEST_RETRIES", 3),
+        sidra_max_connections=_env_int("PEGASUS_DATA_SIDRA_MAX_CONNECTIONS", 16),
+        sidra_concurrent_requests=_env_int("PEGASUS_DATA_SIDRA_CONCURRENT_REQUESTS", 4),
+        sidra_pause_seconds=_env_float("PEGASUS_DATA_SIDRA_PAUSE_SECONDS", 0.15),
+        sidra_value_locality_chunk_size=_env_int("PEGASUS_DATA_SIDRA_LOCALITY_CHUNK_SIZE", 25),
+        sidra_value_period_chunk_size=_env_int("PEGASUS_DATA_SIDRA_PERIOD_CHUNK_SIZE", 12),
+        sidra_catalog_db_path=Path(_env("PEGASUS_DATA_SIDRA_DB_PATH") or data_root / "cache" / "sidra_catalog.sqlite3"),
+        sidra_value_output_root=Path(_env("PEGASUS_DATA_SIDRA_VALUE_OUTPUT_ROOT") or data_root / "compiled" / "sidra"),
+        user_agent=_env("PEGASUS_DATA_USER_AGENT") or "pegasus-data/0.2",
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/__init__.py
+###############################################################################
+from .ftp import DatasusFtpScanner, diff_scan_outputs
+from .inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
+from .profile import build_variable_catalog, profile_dbase_file
+from .translate import build_translation_bundle, emit_translation_grammar, parse_translation_grammar_file, validate_translation_registry
+
+__all__ = [
+    'DatasusFtpScanner',
+    'diff_scan_outputs',
+    'build_dataset_families',
+    'build_family_registry',
+    'inventory_from_scan_jsonl',
+    'build_variable_catalog',
+    'profile_dbase_file',
+    'build_translation_bundle',
+    'emit_translation_grammar',
+    'parse_translation_grammar_file',
+    'validate_translation_registry',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/decode/__init__.py
+###############################################################################
+from .dbase import DatasusDecodeError, dbc_as_temp_dbf, open_dbf, load_dbase_metadata, iter_dbase_rows
+from .inspect import DecodedFilePreview, inspect_dbase_file
+
+__all__ = [
+    'DatasusDecodeError',
+    'dbc_as_temp_dbf',
+    'open_dbf',
+    'load_dbase_metadata',
+    'iter_dbase_rows',
+    'DecodedFilePreview',
+    'inspect_dbase_file',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/decode/dbase.py
+###############################################################################
+from __future__ import annotations
+
+from contextlib import contextmanager
+from pathlib import Path
+import tempfile
+
+from ...config import get_settings
+from ..models import RawSourceRow, SourceFileMetadata
+
+
+class DatasusDecodeError(RuntimeError):
+    pass
+
+
+@contextmanager
+def dbc_as_temp_dbf(path: str):
+    try:
+        import datasus_dbc
+    except ImportError as exc:
+        raise DatasusDecodeError('datasus-dbc is required to read .dbc files') from exc
+    source = Path(path)
+    with tempfile.NamedTemporaryFile(suffix='.dbf', delete=False) as handle:
+        temp_path = Path(handle.name)
+    try:
+        datasus_dbc.decompress(str(source), str(temp_path))
+        yield temp_path
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def open_dbf(path: str | Path, *, encoding: str | None = None):
+    try:
+        from dbfread import DBF
+    except ImportError as exc:
+        raise DatasusDecodeError('dbfread is required to read DBF/DBC contents') from exc
+    return DBF(
+        str(path),
+        encoding=encoding or get_settings().datasus_default_encoding,
+        ignore_missing_memofile=True,
+        char_decode_errors='ignore',
+        lowernames=False,
+        load=False,
+    )
+
+
+def load_dbase_metadata(path: str, *, encoding: str | None = None) -> SourceFileMetadata:
+    source = Path(path)
+    suffix = source.suffix.lower()
+    if suffix == '.dbc':
+        with dbc_as_temp_dbf(path) as dbf_path:
+            table = open_dbf(dbf_path, encoding=encoding)
+            fields = [field.name for field in table.fields]
+    elif suffix == '.dbf':
+        table = open_dbf(path, encoding=encoding)
+        fields = [field.name for field in table.fields]
+    else:
+        raise DatasusDecodeError(f'Unsupported file format: {path}')
+    return SourceFileMetadata(
+        source_system='DATASUS_GENERIC',
+        dataset=source.stem,
+        path=path,
+        encoding=encoding or get_settings().datasus_default_encoding,
+        file_format=suffix.lstrip('.'),
+        field_names=fields,
+        schema_version='dbase_v2',
+    )
+
+
+def iter_dbase_rows(path: str, *, encoding: str | None = None):
+    source = Path(path)
+    suffix = source.suffix.lower()
+    if suffix == '.dbc':
+        with dbc_as_temp_dbf(path) as dbf_path:
+            yield from _iter_dbf_rows(str(dbf_path), raw_file=path, encoding=encoding)
+        return
+    if suffix == '.dbf':
+        yield from _iter_dbf_rows(path, raw_file=path, encoding=encoding)
+        return
+    raise DatasusDecodeError(f'Unsupported file format: {path}')
+
+
+def _iter_dbf_rows(dbf_path: str, *, raw_file: str, encoding: str | None = None):
+    table = open_dbf(dbf_path, encoding=encoding)
+    for index, record in enumerate(table, start=1):
+        yield RawSourceRow(
+            raw_file=raw_file,
+            row_number=index,
+            fields={str(k).upper(): v for k, v in dict(record).items()},
+        )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/decode/inspect.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from .dbase import iter_dbase_rows, load_dbase_metadata
+
+
+@dataclass(frozen=True)
+class DecodedFilePreview:
+    path: str
+    file_format: str
+    field_names: list[str]
+    sample_rows: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def inspect_dbase_file(path: str, *, sample_rows: int = 5) -> DecodedFilePreview:
+    metadata = load_dbase_metadata(path)
+    rows: list[dict[str, Any]] = []
+    for row in iter_dbase_rows(path):
+        rows.append(row.fields)
+        if len(rows) >= sample_rows:
+            break
+    return DecodedFilePreview(
+        path=str(Path(path)),
+        file_format=metadata.file_format,
+        field_names=metadata.field_names,
+        sample_rows=rows,
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/__init__.py
+###############################################################################
+from .manifest import parse_manifest_text
+from .catalog import build_series_catalog
+
+__all__ = ["parse_manifest_text", "build_series_catalog"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/catalog.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from collections import defaultdict
+
+from ...common.io import write_json
+from .docs import associate_pdfs
+from .heuristics import (
+    MIN_FILES_FOR_PATTERN_VALIDATION,
+    classify_partition,
+    classify_path_semantic,
+    format_normalized_date,
+    infer_date_format,
+    infer_system_guess,
+    normalize_datecode,
+)
+from .manifest import ManifestEntry
+
+
+@dataclass(frozen=True)
+class SeriesCatalogEntry:
+    series_id: str
+    series_prefix: str
+    system_guess: str | None
+    partition_type: str
+    date_format: str
+    time_range_raw: tuple[int, int]
+    time_range_display: str
+    geo_coverage: list[str]
+    file_count: int
+    source_paths: list[str]
+    path_semantics: dict[str, str]
+    associated_pdfs: list[dict]
+    validated_pattern: str
+    file_samples: list[str]
+
+    def to_dict(self) -> dict:
+        payload = asdict(self)
+        payload["time_range_raw"] = list(self.time_range_raw)
+        return payload
+
+
+def build_series_catalog(manifest_rows: list[ManifestEntry]) -> list[SeriesCatalogEntry]:
+    by_directory: dict[str, list[ManifestEntry]] = defaultdict(list)
+    for row in manifest_rows:
+        if row.pattern_name:
+            by_directory[row.directory].append(row)
+
+    validated_rows: list[ManifestEntry] = []
+    for rows in by_directory.values():
+        if len(rows) >= MIN_FILES_FOR_PATTERN_VALIDATION:
+            validated_rows.extend(rows)
+
+    by_prefix: dict[str, list[ManifestEntry]] = defaultdict(list)
+    for row in validated_rows:
+        if row.series_prefix:
+            by_prefix[row.series_prefix].append(row)
+
+    out: list[SeriesCatalogEntry] = []
+    for prefix, rows in sorted(by_prefix.items()):
+        geo_coverage = sorted({row.geo_code for row in rows if row.geo_code})
+        partition = classify_partition(set(geo_coverage))
+        if partition == "Unknown":
+            continue
+        date_codes = [row.date_code for row in rows if row.date_code]
+        date_format = infer_date_format(date_codes)
+        normalized = [normalize_datecode(code, date_format) for code in date_codes]
+        if not normalized:
+            continue
+        min_date = min(normalized)
+        max_date = max(normalized)
+        system_guess = infer_system_guess(rows[0].directory)
+        source_paths = sorted({row.directory for row in rows})
+        path_semantics: dict[str, str] = {}
+        for path in source_paths:
+            path_rows = [row for row in rows if row.directory == path and row.date_code]
+            path_dates = [normalize_datecode(row.date_code, date_format) for row in path_rows]
+            if path_dates:
+                path_semantics[path] = classify_path_semantic(path, global_max_date=max_date, path_max_date=max(path_dates), date_format=date_format)
+        pdfs = [match.__dict__ for match in associate_pdfs(prefix, source_paths, manifest_rows)]
+        entry = SeriesCatalogEntry(
+            series_id=f"{system_guess or 'UNKNOWN'}:{prefix}",
+            series_prefix=prefix,
+            system_guess=system_guess,
+            partition_type=partition,
+            date_format=date_format,
+            time_range_raw=(min_date, max_date),
+            time_range_display=f"{format_normalized_date(min_date)} to {format_normalized_date(max_date)}",
+            geo_coverage=geo_coverage,
+            file_count=len(rows),
+            source_paths=source_paths,
+            path_semantics=path_semantics,
+            associated_pdfs=pdfs,
+            validated_pattern=rows[0].pattern_name or "",
+            file_samples=[row.filename for row in rows[:10]],
+        )
+        out.append(entry)
+    return out
+
+
+def write_series_catalog(path: str, series_rows: list[SeriesCatalogEntry]) -> None:
+    write_json(path, [row.to_dict() for row in series_rows])
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/docs.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+
+try:
+    from rapidfuzz import fuzz
+except ImportError:
+    class _FuzzFallback:
+        @staticmethod
+        def partial_ratio(left: str, right: str) -> float:
+            if not left and not right:
+                return 100.0
+            if not left or not right:
+                return 0.0
+            return round(SequenceMatcher(None, left, right).ratio() * 100, 2)
+
+    fuzz = _FuzzFallback()
+
+from .heuristics import (
+    KEYWORD_BONUS,
+    PDF_KEYWORDS,
+    PDF_RELEVANCE_THRESHOLD,
+    WEIGHT_FUZZY_NAME,
+    WEIGHT_FUZZY_PATH,
+    WEIGHT_PROXIMITY,
+)
+from .manifest import ManifestEntry
+
+
+@dataclass(frozen=True)
+class PdfMatch:
+    url: str
+    score: float
+    filename: str
+
+
+def tree_distance(a_parts: list[str], b_parts: list[str]) -> int:
+    common = 0
+    for left, right in zip(a_parts, b_parts):
+        if left == right:
+            common += 1
+        else:
+            break
+    return (len(a_parts) - common) + (len(b_parts) - common)
+
+
+def score_pdf_candidate(series_name: str, data_path_parts: list[str], pdf_entry: ManifestEntry) -> float:
+    dist = tree_distance(data_path_parts, pdf_entry.path_components)
+    if dist > 4:
+        return -1.0
+    pdf_name = pdf_entry.filename.rsplit(".", 1)[0].lower()
+    series_context = f"{series_name} {' '.join(data_path_parts[-2:])}".lower()
+    pdf_context = f"{pdf_name} {' '.join(pdf_entry.path_components[-2:])}".lower()
+    fuzzy_name = fuzz.partial_ratio(series_name.lower(), pdf_name)
+    fuzzy_path = fuzz.partial_ratio(series_context, pdf_context)
+    proximity = max(0, 100 - dist * 20)
+    bonus = KEYWORD_BONUS if any(keyword in pdf_name for keyword in PDF_KEYWORDS) else 0
+    return (WEIGHT_PROXIMITY * proximity) + (WEIGHT_FUZZY_NAME * fuzzy_name) + (WEIGHT_FUZZY_PATH * fuzzy_path) + bonus
+
+
+def associate_pdfs(series_name: str, source_paths: list[str], manifest_rows: list[ManifestEntry]) -> list[PdfMatch]:
+    if not source_paths:
+        return []
+    data_path_parts = [part for part in source_paths[0].split("/") if part]
+    matches: list[PdfMatch] = []
+    for row in manifest_rows:
+        if row.extension != ".pdf":
+            continue
+        score = score_pdf_candidate(series_name, data_path_parts, row)
+        if score >= PDF_RELEVANCE_THRESHOLD:
+            matches.append(PdfMatch(url=row.url, score=round(score, 2), filename=row.filename))
+    matches.sort(key=lambda item: item.score, reverse=True)
+    return matches
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/heuristics.py
+###############################################################################
+from __future__ import annotations
+
+import datetime as dt
+import re
+from pathlib import PurePosixPath
+
+DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".zip", ".gz"}
+PDF_KEYWORDS = {"manual", "dicionario", "leia-me", "layout", "estrutura", "dic_dados", "instrucoes"}
+AUXILIARY_PATH_KEYWORDS = {"TABELAS", "DOCS", "DOCUMENTOS", "TABWIN", "DOC"}
+EXCLUSION_PATH_KEYWORDS = {"/IBGE/"}
+STAGING_PATH_KEYWORDS = {"PRELIM", "HOMOL"}
+UF_CODES = {
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+    "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"
+}
+PATTERNS: dict[str, re.Pattern[str]] = {
+    "PREFIX_GEO_YYMM": re.compile(r"^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{4})$", re.IGNORECASE),
+    "PREFIX_GEO_YY": re.compile(r"^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{2})$", re.IGNORECASE),
+    "PREFIX_GEO_DATE": re.compile(r"^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{2,8})$", re.IGNORECASE),
+}
+MIN_FILES_FOR_PATTERN_VALIDATION = 5
+MIN_UF_COUNT_FOR_STATE_VALIDATION = 20
+PDF_RELEVANCE_THRESHOLD = 60.0
+WEIGHT_PROXIMITY = 0.35
+WEIGHT_FUZZY_NAME = 0.25
+WEIGHT_FUZZY_PATH = 0.40
+KEYWORD_BONUS = 25
+
+
+def is_excluded_path(path: str) -> bool:
+    upper = path.upper()
+    return any(token in upper for token in EXCLUSION_PATH_KEYWORDS)
+
+
+def classify_path_type(path: str) -> str:
+    upper = path.upper()
+    return "Auxiliary" if any(token in upper for token in AUXILIARY_PATH_KEYWORDS) else "Primary"
+
+
+def split_path(path: str) -> tuple[str, str, str]:
+    p = PurePosixPath(path)
+    return str(p.parent), p.name, p.suffix.lower()
+
+
+def infer_system_guess(directory: str) -> str | None:
+    parts = [part for part in directory.split("/") if part]
+    if len(parts) >= 3:
+        return parts[2]
+    return None
+
+
+def infer_date_format(date_codes: list[str]) -> str:
+    four = [value for value in date_codes if len(value) == 4]
+    if not four:
+        return "YY"
+    try:
+        valid_month_share = sum(1 <= int(value[2:]) <= 12 for value in four) / len(four)
+        if valid_month_share > 0.8:
+            return "YYMM"
+        if all(19 <= int(value[:2]) <= 20 for value in four):
+            return "YYYY"
+    except Exception:
+        return "YY"
+    return "YY"
+
+
+def normalize_datecode(date_code: str, date_format: str) -> int:
+    number = int(date_code)
+    if date_format == "YY":
+        year = 2000 + number if number < 70 else 1900 + number
+        return year * 100
+    if date_format == "YYMM":
+        year, month = divmod(number, 100)
+        year = 2000 + year if year < 70 else 1900 + year
+        return year * 100 + month
+    if date_format == "YYYY":
+        return number * 100
+    return 0
+
+
+def format_normalized_date(value: int) -> str:
+    year, month = divmod(value, 100)
+    if month == 0:
+        return str(year)
+    return dt.date(year, month, 1).strftime("%b %Y")
+
+
+def classify_partition(unique_geo_codes: set[str]) -> str:
+    is_state_partitioned = len(unique_geo_codes.intersection(UF_CODES)) >= MIN_UF_COUNT_FOR_STATE_VALIDATION
+    is_nationwide = "BR" in unique_geo_codes
+    if is_state_partitioned and is_nationwide:
+        return "Mixed-Partition"
+    if is_state_partitioned:
+        return "State-Partitioned"
+    if is_nationwide:
+        return "Nation-Wide"
+    return "Unknown"
+
+
+def classify_path_semantic(path: str, *, global_max_date: int, path_max_date: int, date_format: str) -> str:
+    upper = path.upper()
+    if any(token in upper for token in STAGING_PATH_KEYWORDS):
+        return "[Staging]"
+    if (date_format == "YYMM" and global_max_date - path_max_date > 500) or (date_format == "YY" and global_max_date - path_max_date > 5):
+        return "[Legacy Archive]"
+    return "[Primary]"
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/manifest.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from pathlib import PurePosixPath
+from urllib.parse import urlparse
+
+from ...common.io import read_jsonl, read_text_lines, write_jsonl
+from .heuristics import DATA_EXTENSIONS, PATTERNS, classify_path_type, is_excluded_path
+
+
+@dataclass(frozen=True)
+class ManifestEntry:
+    path: str
+    url: str
+    directory: str
+    filename: str
+    extension: str
+    path_components: list[str]
+    source: str
+    scan_id: str | None
+    path_type: str
+    pattern_name: str | None
+    series_prefix: str | None
+    geo_code: str | None
+    date_code: str | None
+    raw_listing_facts: dict | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _parse_url_or_path(raw: str) -> tuple[str, str]:
+    if "://" in raw:
+        parsed = urlparse(raw)
+        return raw, parsed.path
+    path = raw
+    url = raw if raw.startswith("ftp://") else f"ftp://ftp.datasus.gov.br{raw}"
+    return url, path
+
+
+def parse_manifest_line(raw: str, *, scan_id: str | None = None, source: str = "datasus_ftp") -> ManifestEntry | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    url, path = _parse_url_or_path(raw)
+    if is_excluded_path(path):
+        return None
+    pure = PurePosixPath(path)
+    directory = str(pure.parent)
+    filename = pure.name
+    extension = pure.suffix.lower()
+    stem = pure.stem
+    path_type = classify_path_type(path)
+    pattern_name = None
+    series_prefix = None
+    geo_code = None
+    date_code = None
+    if extension in DATA_EXTENSIONS and path_type == "Primary":
+        for candidate_name, pattern in PATTERNS.items():
+            match = pattern.match(stem)
+            if match:
+                pattern_name = candidate_name
+                series_prefix = match.group(1).upper()
+                geo_code = match.group(2).upper()
+                date_code = match.group(3)
+                break
+    return ManifestEntry(
+        path=path,
+        url=url,
+        directory=directory,
+        filename=filename,
+        extension=extension,
+        path_components=[part for part in directory.split("/") if part],
+        source=source,
+        scan_id=scan_id,
+        path_type=path_type,
+        pattern_name=pattern_name,
+        series_prefix=series_prefix,
+        geo_code=geo_code,
+        date_code=date_code,
+        raw_listing_facts=None,
+    )
+
+
+def parse_manifest_text(path: str, *, scan_id: str | None = None) -> list[ManifestEntry]:
+    rows: list[ManifestEntry] = []
+    for line in read_text_lines(path):
+        parsed = parse_manifest_line(line, scan_id=scan_id)
+        if parsed is not None:
+            rows.append(parsed)
+    return rows
+
+
+def read_manifest_jsonl(path: str) -> list[ManifestEntry]:
+    return [ManifestEntry(**row) for row in read_jsonl(path)]
+
+
+def write_manifest_jsonl(path: str, entries: list[ManifestEntry]) -> None:
+    write_jsonl(path, (entry.to_dict() for entry in entries))
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/discovery/scanner.py
+###############################################################################
+from __future__ import annotations
+
+import ftplib
+import json
+import queue
+import re
+import threading
+import time
+from dataclasses import asdict, dataclass
+from pathlib import PurePosixPath, Path
+
+from ...common.storage import ensure_parent
+from ...config import get_settings
+
+
+_LIST_UNIX = re.compile(
+    r"^(?P<mode>[bcdlps-][rwx-]{9})\s+\d+\s+\S+\s+\S+\s+"
+    r"(?P<size>\d+)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+"
+    r"(?P<timeyear>[\d:]{4,5})\s+(?P<name>.+)$"
+)
+
+
+@dataclass(frozen=True)
+class ScanEntry:
+    parent_directory: str
+    child_name: str
+    full_path: str
+    entry_type: str | None
+    size: int | None
+    modified: str | None
+    listing_method: str
+    scan_timestamp: float
+    worker_id: int
+    error_flags: list[str]
+
+
+class DatasusFtpScanner:
+    def __init__(self, *, host: str | None = None, base_path: str | None = None, connections: int | None = None) -> None:
+        settings = get_settings()
+        self.host = host or settings.datasus_ftp_host
+        self.base_path = base_path or settings.datasus_ftp_base_path
+        self.connections = connections or settings.datasus_scan_connections
+        self.timeout = settings.datasus_scan_timeout_seconds
+
+    def _connect(self) -> ftplib.FTP:
+        ftp = ftplib.FTP(self.host, timeout=self.timeout)
+        ftp.login()
+        ftp.set_pasv(True)
+        return ftp
+
+    def _mlsd_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        rows: list[ScanEntry] = []
+        for name, facts in ftp.mlsd(directory):
+            full_path = str(PurePosixPath(directory) / name)
+            rows.append(
+                ScanEntry(
+                    parent_directory=directory,
+                    child_name=name,
+                    full_path=full_path,
+                    entry_type=facts.get("type"),
+                    size=int(facts["size"]) if facts.get("size", "").isdigit() else None,
+                    modified=facts.get("modify"),
+                    listing_method="MLSD",
+                    scan_timestamp=time.time(),
+                    worker_id=-1,
+                    error_flags=[],
+                )
+            )
+        return rows
+
+    def _list_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        raw_lines: list[str] = []
+        ftp.retrlines(f"LIST {directory}", raw_lines.append)
+        rows: list[ScanEntry] = []
+        for line in raw_lines:
+            match = _LIST_UNIX.match(line)
+            if not match:
+                continue
+            name = match.group("name")
+            full_path = str(PurePosixPath(directory) / name)
+            mode = match.group("mode")
+            entry_type = "dir" if mode.startswith("d") else "file"
+            rows.append(
+                ScanEntry(
+                    parent_directory=directory,
+                    child_name=name,
+                    full_path=full_path,
+                    entry_type=entry_type,
+                    size=int(match.group("size")),
+                    modified=None,
+                    listing_method="LIST",
+                    scan_timestamp=time.time(),
+                    worker_id=-1,
+                    error_flags=[],
+                )
+            )
+        return rows
+
+    def _nlst_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        rows: list[ScanEntry] = []
+        for child in ftp.nlst(directory):
+            pure = PurePosixPath(child)
+            rows.append(
+                ScanEntry(
+                    parent_directory=str(pure.parent),
+                    child_name=pure.name,
+                    full_path=str(pure),
+                    entry_type=None,
+                    size=None,
+                    modified=None,
+                    listing_method="NLST",
+                    scan_timestamp=time.time(),
+                    worker_id=-1,
+                    error_flags=[],
+                )
+            )
+        return rows
+
+    def _list_directory(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        try:
+            return self._mlsd_entries(ftp, directory)
+        except Exception:
+            pass
+        try:
+            return self._list_entries(ftp, directory)
+        except Exception:
+            return self._nlst_entries(ftp, directory)
+
+    def scan_to_jsonl(self, *, output_path: str, checkpoint_path: str | None = None) -> None:
+        queue_dirs: queue.Queue[str] = queue.Queue()
+        queue_dirs.put(self.base_path)
+        visited: set[str] = set()
+        visited_lock = threading.Lock()
+        output_lock = threading.Lock()
+        stop_token = object()
+        checkpoint = Path(checkpoint_path) if checkpoint_path else None
+        output = ensure_parent(output_path)
+
+        def persist_checkpoint() -> None:
+            if checkpoint is None:
+                return
+            ensure_parent(checkpoint)
+            with checkpoint.open("w", encoding="utf-8") as handle:
+                json.dump({"visited": sorted(visited), "pending": list(queue_dirs.queue)}, handle, ensure_ascii=False, indent=2)
+
+        def worker(worker_id: int) -> None:
+            ftp = self._connect()
+            try:
+                while True:
+                    directory = queue_dirs.get()
+                    if directory is stop_token:
+                        return
+                    with visited_lock:
+                        if directory in visited:
+                            queue_dirs.task_done()
+                            continue
+                        visited.add(directory)
+                    try:
+                        rows = self._list_directory(ftp, directory)
+                    except Exception:
+                        queue_dirs.task_done()
+                        continue
+                    for row in rows:
+                        row = ScanEntry(**{**asdict(row), "worker_id": worker_id})
+                        with output_lock:
+                            with output.open("a", encoding="utf-8") as handle:
+                                handle.write(json.dumps(asdict(row), ensure_ascii=False) + "\n")
+                        if row.entry_type == "dir":
+                            queue_dirs.put(row.full_path)
+                    queue_dirs.task_done()
+                    if checkpoint is not None and len(visited) % 250 == 0:
+                        persist_checkpoint()
+            finally:
+                try:
+                    ftp.quit()
+                except Exception:
+                    ftp.close()
+
+        threads = [threading.Thread(target=worker, args=(idx,), daemon=True) for idx in range(self.connections)]
+        for thread in threads:
+            thread.start()
+        queue_dirs.join()
+        for _ in threads:
+            queue_dirs.put(stop_token)
+        for thread in threads:
+            thread.join()
+        persist_checkpoint()
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/fetch/__init__.py
+###############################################################################
+from .planner import plan_datasus_downloads
+from .downloader import download_manifest_entries
+
+__all__ = ["plan_datasus_downloads", "download_manifest_entries"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/fetch/downloader.py
+###############################################################################
+from __future__ import annotations
+
+import ftplib
+import json
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+from ...common.hashing import sha256_file
+from ...common.storage import ensure_parent
+from ...config import get_settings
+from .planner import DatasusDownloadPlan
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _download_one(plan: DatasusDownloadPlan) -> dict:
+    settings = get_settings()
+    target = ensure_parent(plan.target_path)
+    parsed = urlparse(plan.source_url)
+    host = parsed.hostname or settings.datasus_ftp_host
+    path = parsed.path
+    ftp = ftplib.FTP(host, timeout=settings.datasus_download_timeout_seconds)
+    ftp.login()
+    ftp.set_pasv(True)
+    try:
+        with target.open("wb") as handle:
+            ftp.retrbinary(f"RETR {path}", handle.write)
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            ftp.close()
+    metadata = {
+        **asdict(plan),
+        "source": "datasus_ftp",
+        "downloaded_at": _now(),
+        "size_bytes": target.stat().st_size,
+        "sha256": sha256_file(target),
+        "transport": "ftp",
+        "listing_method": "manifest",
+        "etag": None,
+        "notes": [],
+    }
+    metadata_path = ensure_parent(plan.metadata_path)
+    with metadata_path.open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, ensure_ascii=False, indent=2)
+    return metadata
+
+
+def download_manifest_entries(plans: list[DatasusDownloadPlan]) -> list[dict]:
+    return [_download_one(plan) for plan in plans]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/fetch/planner.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import PurePosixPath
+
+from ..discovery.manifest import ManifestEntry
+from ..discovery.heuristics import infer_system_guess
+
+
+@dataclass(frozen=True)
+class DatasusDownloadPlan:
+    source_url: str
+    target_path: str
+    metadata_path: str
+    system: str | None
+    prefix: str | None
+    geo_code: str | None
+    date_code: str | None
+
+
+def _infer_year(date_code: str | None) -> str:
+    if not date_code:
+        return "unknown"
+    if len(date_code) == 2:
+        return f"20{date_code}" if int(date_code) < 70 else f"19{date_code}"
+    if len(date_code) == 4 and int(date_code[:2]) in range(19, 21):
+        return date_code
+    if len(date_code) == 4:
+        yy = int(date_code[:2])
+        return str(2000 + yy if yy < 70 else 1900 + yy)
+    return date_code[:4]
+
+
+def plan_datasus_downloads(entries: list[ManifestEntry], *, scan_id: str, root: str = "data/raw/datasus/ftp") -> list[DatasusDownloadPlan]:
+    out: list[DatasusDownloadPlan] = []
+    for entry in entries:
+        if entry.extension == ".pdf":
+            continue
+        system = infer_system_guess(entry.directory)
+        prefix = entry.series_prefix or "unknown"
+        geo = entry.geo_code or "unknown"
+        year = _infer_year(entry.date_code)
+        rel = PurePosixPath(root) / f"scan_id={scan_id}" / f"system={system or 'UNKNOWN'}" / f"prefix={prefix}" / f"geo={geo}" / f"year={year}" / entry.filename
+        out.append(
+            DatasusDownloadPlan(
+                source_url=entry.url,
+                target_path=str(rel),
+                metadata_path=str(rel) + ".metadata.json",
+                system=system,
+                prefix=entry.series_prefix,
+                geo_code=entry.geo_code,
+                date_code=entry.date_code,
+            )
+        )
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/ftp/__init__.py
+###############################################################################
+from .scanner import DatasusFtpScanner, ScanEntry
+from .state import ScanState
+from .diff import ScanDiff, diff_scan_outputs
+
+__all__ = ['DatasusFtpScanner', 'ScanEntry', 'ScanState', 'ScanDiff', 'diff_scan_outputs']
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/ftp/diff.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+
+from ...common.io import read_jsonl
+
+
+@dataclass(frozen=True)
+class ScanDiff:
+    added: list[str]
+    removed: list[str]
+    common: int
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def diff_scan_outputs(old_jsonl: str, new_jsonl: str) -> ScanDiff:
+    old_paths = {row['full_path'] for row in read_jsonl(old_jsonl)}
+    new_paths = {row['full_path'] for row in read_jsonl(new_jsonl)}
+    return ScanDiff(
+        added=sorted(new_paths - old_paths),
+        removed=sorted(old_paths - new_paths),
+        common=len(old_paths & new_paths),
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/ftp/scanner.py
+###############################################################################
+from __future__ import annotations
+
+import ftplib
+import json
+import queue
+import re
+import threading
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path, PurePosixPath
+
+from ...common.storage import ensure_parent
+from ...config import get_settings
+from .state import ScanState
+
+_LIST_UNIX = re.compile(
+    r'^(?P<mode>[bcdlps-][rwx-]{9})\s+\d+\s+\S+\s+\S+\s+'
+    r'(?P<size>\d+)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+'
+    r'(?P<timeyear>[\d:]{4,5})\s+(?P<name>.+)$'
+)
+
+
+@dataclass(frozen=True)
+class ScanEntry:
+    parent_directory: str
+    child_name: str
+    full_path: str
+    entry_type: str | None
+    size: int | None
+    modified: str | None
+    listing_method: str
+    scan_timestamp: float
+    worker_id: int
+    error_flags: list[str]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class DatasusFtpScanner:
+    def __init__(self, *, host: str | None = None, base_path: str | None = None, connections: int | None = None) -> None:
+        settings = get_settings()
+        self.host = host or settings.datasus_ftp_host
+        self.base_path = base_path or settings.datasus_ftp_base_path
+        self.connections = connections or settings.datasus_scan_connections
+        self.timeout = settings.datasus_scan_timeout_seconds
+
+    def _connect(self) -> ftplib.FTP:
+        ftp = ftplib.FTP(self.host, timeout=self.timeout)
+        ftp.login()
+        ftp.set_pasv(True)
+        return ftp
+
+    def _mlsd_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        rows = []
+        for name, facts in ftp.mlsd(directory):
+            entry_type = facts.get('type')
+            if entry_type in {'cdir', 'pdir'}:
+                continue
+            rows.append(ScanEntry(
+                parent_directory=directory,
+                child_name=name,
+                full_path=str(PurePosixPath(directory) / name),
+                entry_type=entry_type,
+                size=int(facts['size']) if facts.get('size', '').isdigit() else None,
+                modified=facts.get('modify'),
+                listing_method='MLSD',
+                scan_timestamp=time.time(),
+                worker_id=-1,
+                error_flags=[],
+            ))
+        return rows
+
+    def _list_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        raw_lines: list[str] = []
+        ftp.retrlines(f'LIST {directory}', raw_lines.append)
+        rows: list[ScanEntry] = []
+        for line in raw_lines:
+            match = _LIST_UNIX.match(line)
+            if not match:
+                continue
+            name = match.group('name')
+            rows.append(ScanEntry(
+                parent_directory=directory,
+                child_name=name,
+                full_path=str(PurePosixPath(directory) / name),
+                entry_type='dir' if match.group('mode').startswith('d') else 'file',
+                size=int(match.group('size')),
+                modified=None,
+                listing_method='LIST',
+                scan_timestamp=time.time(),
+                worker_id=-1,
+                error_flags=[],
+            ))
+        return rows
+
+    def _nlst_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        rows = []
+        for child in ftp.nlst(directory):
+            pure = PurePosixPath(child)
+            rows.append(ScanEntry(
+                parent_directory=str(pure.parent),
+                child_name=pure.name,
+                full_path=str(pure),
+                entry_type=None,
+                size=None,
+                modified=None,
+                listing_method='NLST',
+                scan_timestamp=time.time(),
+                worker_id=-1,
+                error_flags=['unknown_entry_type'],
+            ))
+        return rows
+
+    def _list_directory(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        for method in (self._mlsd_entries, self._list_entries, self._nlst_entries):
+            try:
+                return method(ftp, directory)
+            except Exception:
+                continue
+        raise RuntimeError(f'Could not list directory: {directory}')
+
+    def scan_to_jsonl(self, *, output_path: str, checkpoint_path: str | None = None, append: bool = True) -> ScanState:
+        stop_token = object()
+        out = ensure_parent(output_path)
+        checkpoint = Path(checkpoint_path) if checkpoint_path else None
+        state = ScanState.from_file(checkpoint) if checkpoint and checkpoint.exists() else ScanState(
+            pending_dirs=[self.base_path],
+        )
+        pending: queue.Queue[object] = queue.Queue()
+        for item in state.pending_dirs or [self.base_path]:
+            pending.put(item)
+        visited_lock = threading.Lock()
+        output_lock = threading.Lock()
+        state_lock = threading.Lock()
+        started_fresh = not append
+        if started_fresh and out.exists():
+            out.unlink()
+
+        def flush_state() -> None:
+            if checkpoint is None:
+                return
+            with state_lock:
+                snapshot = ScanState(
+                    visited_dirs=set(state.visited_dirs),
+                    pending_dirs=[item for item in list(pending.queue) if isinstance(item, str)],
+                    errors=list(state.errors),
+                    entries_written=state.entries_written,
+                )
+            snapshot.save(checkpoint)
+
+        def worker(worker_id: int) -> None:
+            ftp = self._connect()
+            try:
+                while True:
+                    directory = pending.get()
+                    if directory is stop_token:
+                        pending.task_done()
+                        return
+                    assert isinstance(directory, str)
+                    with visited_lock:
+                        if directory in state.visited_dirs:
+                            pending.task_done()
+                            continue
+                        state.visited_dirs.add(directory)
+                    try:
+                        rows = self._list_directory(ftp, directory)
+                    except Exception as exc:
+                        with state_lock:
+                            state.errors.append({'directory': directory, 'worker_id': worker_id, 'error': str(exc)})
+                        pending.task_done()
+                        continue
+                    local_lines = []
+                    for row in rows:
+                        enriched = ScanEntry(**{**row.to_dict(), 'worker_id': worker_id})
+                        local_lines.append(json.dumps(enriched.to_dict(), ensure_ascii=False))
+                        if enriched.entry_type == 'dir':
+                            pending.put(enriched.full_path)
+                    with output_lock:
+                        with out.open('a', encoding='utf-8') as handle:
+                            for line in local_lines:
+                                handle.write(line + '\n')
+                    with state_lock:
+                        state.entries_written += len(local_lines)
+                    pending.task_done()
+                    if checkpoint and state.entries_written % 1000 == 0:
+                        flush_state()
+            finally:
+                try:
+                    ftp.quit()
+                except Exception:
+                    ftp.close()
+
+        threads = [threading.Thread(target=worker, args=(idx,), daemon=True) for idx in range(self.connections)]
+        for thread in threads:
+            thread.start()
+        pending.join()
+        for _ in threads:
+            pending.put(stop_token)
+        for thread in threads:
+            thread.join()
+        flush_state()
+        return state
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/ftp/state.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+import json
+
+from ...common.storage import ensure_parent
+
+
+@dataclass
+class ScanState:
+    visited_dirs: set[str] = field(default_factory=set)
+    pending_dirs: list[str] = field(default_factory=list)
+    errors: list[dict] = field(default_factory=list)
+    entries_written: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            'visited_dirs': sorted(self.visited_dirs),
+            'pending_dirs': list(self.pending_dirs),
+            'errors': list(self.errors),
+            'entries_written': self.entries_written,
+        }
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> 'ScanState':
+        payload = json.loads(Path(path).read_text(encoding='utf-8'))
+        return cls(
+            visited_dirs=set(payload.get('visited_dirs', [])),
+            pending_dirs=list(payload.get('pending_dirs', [])),
+            errors=list(payload.get('errors', [])),
+            entries_written=int(payload.get('entries_written', 0)),
+        )
+
+    def save(self, path: str | Path) -> None:
+        target = ensure_parent(path)
+        target.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/inventory/__init__.py
+###############################################################################
+from .files import InventoryFile, inventory_from_scan_jsonl
+from .datasets import DatasetFamily, build_dataset_families
+from .registry import FamilyRegistryEntry, build_family_registry
+
+__all__ = [
+    'InventoryFile',
+    'inventory_from_scan_jsonl',
+    'DatasetFamily',
+    'build_dataset_families',
+    'FamilyRegistryEntry',
+    'build_family_registry',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/inventory/datasets.py
+###############################################################################
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from ..discovery.docs import associate_pdfs
+from ..discovery.heuristics import (
+    MIN_FILES_FOR_PATTERN_VALIDATION,
+    classify_partition,
+    classify_path_semantic,
+    format_normalized_date,
+    infer_date_format,
+    normalize_datecode,
+)
+from .files import InventoryFile
+
+
+@dataclass(frozen=True)
+class DatasetFamily:
+    family_id: str
+    system_guess: str | None
+    series_prefix: str | None
+    partition_type: str
+    date_format: str | None
+    time_range_display: str | None
+    file_count: int
+    files: list[str]
+    source_paths: list[str]
+    geo_coverage: list[str]
+    path_semantics: dict[str, str]
+    associated_docs: list[dict]
+    schema_signatures: list[str]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dict[str, str] | None = None) -> list[DatasetFamily]:
+    schema_signatures = schema_signatures or {}
+    by_key: dict[tuple[str | None, str | None], list[InventoryFile]] = defaultdict(list)
+    for item in files:
+        if item.path_type != 'Primary':
+            continue
+        key = (item.system_guess, item.series_prefix or Path(item.filename).stem)
+        by_key[key].append(item)
+
+    out: list[DatasetFamily] = []
+    for (system_guess, prefix), rows in sorted(by_key.items(), key=lambda kv: (kv[0][0] or '', kv[0][1] or '')):
+        if len(rows) < MIN_FILES_FOR_PATTERN_VALIDATION and any(r.pattern_name for r in rows):
+            continue
+        geo_coverage = sorted({row.geo_code for row in rows if row.geo_code})
+        partition = classify_partition(set(geo_coverage)) if geo_coverage else 'Unknown'
+        date_codes = [row.date_code for row in rows if row.date_code]
+        date_format = infer_date_format(date_codes) if date_codes else None
+        time_range_display = None
+        path_semantics: dict[str, str] = {}
+        if date_format and date_codes:
+            normalized = [normalize_datecode(code, date_format) for code in date_codes]
+            time_range_display = f"{format_normalized_date(min(normalized))} to {format_normalized_date(max(normalized))}"
+            for directory in sorted({row.directory for row in rows}):
+                path_rows = [row for row in rows if row.directory == directory and row.date_code]
+                path_dates = [normalize_datecode(row.date_code, date_format) for row in path_rows]
+                if path_dates:
+                    path_semantics[directory] = classify_path_semantic(directory, global_max_date=max(normalized), path_max_date=max(path_dates), date_format=date_format)
+        files_for_family = sorted(row.path for row in rows)
+        signatures = sorted({schema_signatures.get(path, '') for path in files_for_family if schema_signatures.get(path)})
+        docs = [match.__dict__ for match in associate_pdfs(prefix or (system_guess or 'UNKNOWN'), sorted({r.directory for r in rows}), [
+            type('ManifestLike', (), {'path': f.path, 'url': f'ftp://ftp.datasus.gov.br{f.path}', 'directory': f.directory, 'filename': f.filename, 'extension': f.extension, 'path_components': [p for p in f.directory.split('/') if p], 'source': 'datasus_ftp', 'scan_id': None, 'path_type': f.path_type, 'pattern_name': f.pattern_name, 'series_prefix': f.series_prefix, 'geo_code': f.geo_code, 'date_code': f.date_code, 'raw_listing_facts': None})
+            for f in files
+        ])]
+        family_id = f"{system_guess or 'UNKNOWN'}:{prefix or Path(rows[0].filename).stem}"
+        if signatures:
+            family_id += f":s{len(signatures)}"
+        out.append(DatasetFamily(
+            family_id=family_id,
+            system_guess=system_guess,
+            series_prefix=prefix,
+            partition_type=partition,
+            date_format=date_format,
+            time_range_display=time_range_display,
+            file_count=len(rows),
+            files=files_for_family,
+            source_paths=sorted({row.directory for row in rows}),
+            geo_coverage=geo_coverage,
+            path_semantics=path_semantics,
+            associated_docs=docs,
+            schema_signatures=signatures,
+        ))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/inventory/files.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from pathlib import PurePosixPath
+
+from ...common.io import read_jsonl
+from ..discovery.heuristics import classify_path_type, infer_system_guess, is_excluded_path, PATTERNS
+
+
+@dataclass(frozen=True)
+class InventoryFile:
+    path: str
+    directory: str
+    filename: str
+    extension: str
+    system_guess: str | None
+    path_type: str
+    series_prefix: str | None
+    geo_code: str | None
+    date_code: str | None
+    pattern_name: str | None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def inventory_from_scan_jsonl(path: str) -> list[InventoryFile]:
+    out: list[InventoryFile] = []
+    for row in read_jsonl(path):
+        full_path = row['full_path']
+        if row.get('entry_type') == 'dir' or is_excluded_path(full_path):
+            continue
+        pure = PurePosixPath(full_path)
+        extension = pure.suffix.lower()
+        stem = pure.stem
+        pattern_name = prefix = geo = date = None
+        for candidate_name, pattern in PATTERNS.items():
+            match = pattern.match(stem)
+            if match:
+                pattern_name = candidate_name
+                prefix = match.group(1).upper()
+                geo = match.group(2).upper()
+                date = match.group(3)
+                break
+        out.append(InventoryFile(
+            path=full_path,
+            directory=str(pure.parent),
+            filename=pure.name,
+            extension=extension,
+            system_guess=infer_system_guess(str(pure.parent)),
+            path_type=classify_path_type(full_path),
+            series_prefix=prefix,
+            geo_code=geo,
+            date_code=date,
+            pattern_name=pattern_name,
+        ))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/models.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(frozen=True)
+class SourceFileMetadata:
+    source_system: str
+    dataset: str | None
+    path: str
+    encoding: str | None
+    file_format: str
+    field_names: list[str]
+    schema_version: str
+
+
+@dataclass(frozen=True)
+class RawSourceRow:
+    raw_file: str
+    row_number: int
+    fields: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SourceNormalizedRow:
+    source: str
+    dataset: str
+    raw_file: str
+    row_number: int
+    fields: dict[str, Any]
+    parse_warnings: list[str] = field(default_factory=list)
+    encoding: str | None = None
+    schema_version: str | None = None
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/parsers/__init__.py
+###############################################################################
+from .base import DatasusParser
+from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
+from .generic import GenericDatasusDbaseParser
+
+__all__ = [
+    'DatasusParser',
+    'RawSourceRow',
+    'SourceFileMetadata',
+    'SourceNormalizedRow',
+    'GenericDatasusDbaseParser',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/parsers/base.py
+###############################################################################
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Iterator
+
+from ...pegasus.canonical.schema import CanonicalRecord
+from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
+
+
+class DatasusParser(ABC):
+    source_system: str = 'DATASUS_GENERIC'
+    dataset: str | None = None
+    schema_version: str = 'v1'
+
+    @abstractmethod
+    def detect_file(self, path: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_metadata(self, path: str) -> SourceFileMetadata:
+        raise NotImplementedError
+
+    @abstractmethod
+    def iter_raw_rows(self, path: str) -> Iterator[RawSourceRow]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def normalize_raw_row(self, row: RawSourceRow) -> SourceNormalizedRow:
+        raise NotImplementedError
+
+    def iter_normalized_rows(self, path: str) -> Iterator[SourceNormalizedRow]:
+        for row in self.iter_raw_rows(path):
+            yield self.normalize_raw_row(row)
+
+    def to_canonical(self, row: SourceNormalizedRow) -> CanonicalRecord | None:
+        return None
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/parsers/dbase.py
+###############################################################################
+from ..decode.dbase import DatasusDecodeError, dbc_as_temp_dbf, open_dbf, load_dbase_metadata, iter_dbase_rows
+
+__all__ = ['DatasusDecodeError', 'dbc_as_temp_dbf', 'open_dbf', 'load_dbase_metadata', 'iter_dbase_rows']
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/parsers/generic.py
+###############################################################################
+from __future__ import annotations
+
+from pathlib import Path
+
+from ..decode.dbase import iter_dbase_rows, load_dbase_metadata
+from ..discovery.heuristics import infer_system_guess
+from .base import DatasusParser
+from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
+
+
+class GenericDatasusDbaseParser(DatasusParser):
+    source_system = 'DATASUS_GENERIC'
+    schema_version = 'datasus_generic_v2'
+
+    def detect_file(self, path: str) -> bool:
+        return Path(path).suffix.lower() in {'.dbc', '.dbf'}
+
+    def load_metadata(self, path: str) -> SourceFileMetadata:
+        metadata = load_dbase_metadata(path)
+        return SourceFileMetadata(
+            source_system=infer_system_guess(str(Path(path).parent)) or self.source_system,
+            dataset=Path(path).stem,
+            path=metadata.path,
+            encoding=metadata.encoding,
+            file_format=metadata.file_format,
+            field_names=metadata.field_names,
+            schema_version=self.schema_version,
+        )
+
+    def iter_raw_rows(self, path: str):
+        yield from iter_dbase_rows(path)
+
+    def normalize_raw_row(self, row: RawSourceRow) -> SourceNormalizedRow:
+        return SourceNormalizedRow(
+            source=infer_system_guess(str(Path(row.raw_file).parent)) or self.source_system,
+            dataset=Path(row.raw_file).stem,
+            raw_file=row.raw_file,
+            row_number=row.row_number,
+            fields=row.fields,
+            parse_warnings=[],
+            encoding=None,
+            schema_version=self.schema_version,
+        )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/__init__.py
+###############################################################################
+from .fields import FieldProfile, profile_field
+from .tables import TableProfile, profile_dbase_file
+from .variables import VariableCatalogEntry, build_variable_catalog
+
+__all__ = [
+    'FieldProfile',
+    'profile_field',
+    'TableProfile',
+    'profile_dbase_file',
+    'VariableCatalogEntry',
+    'build_variable_catalog',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/fields.py
+###############################################################################
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable
+
+
+@dataclass(frozen=True)
+class FieldProfile:
+    name: str
+    primitive_type: str
+    non_null_count: int
+    null_count: int
+    distinct_sample_count: int
+    samples: list[str]
+    signals: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _stringify(value: Any) -> str:
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def infer_primitive_type(values: list[str], field_name: str) -> tuple[str, list[str]]:
+    signals: list[str] = []
+    non_empty = [v for v in values if v != '']
+    upper_name = field_name.upper()
+    if not non_empty:
+        return 'empty', signals
+    if upper_name.startswith('DT') or upper_name.endswith('DATA') or 'DT' in upper_name[:3]:
+        signals.append('date_name_hint')
+    if upper_name.startswith('CODMUN'):
+        signals.append('municipality_name_hint')
+        return 'municipality_code', signals
+    if all(v.isdigit() for v in non_empty):
+        lengths = {len(v) for v in non_empty[:100]}
+        if lengths.issubset({6, 7}) and upper_name.startswith('CODMUN'):
+            return 'municipality_code', signals
+        if lengths == {2} and upper_name.startswith('DT'):
+            return 'date_fragment', signals
+        if max(lengths) <= 2 and len(set(non_empty[:50])) <= 20:
+            return 'categorical_code', signals
+        return 'integer', signals
+    if all(_looks_date(v) for v in non_empty[:50]):
+        signals.append('date_value_hint')
+        return 'date', signals
+    if all(_looks_float(v) for v in non_empty[:50]):
+        return 'numeric', signals
+    if len(set(non_empty[:100])) <= 20:
+        return 'categorical_text', signals
+    return 'text', signals
+
+
+def _looks_float(value: str) -> bool:
+    try:
+        float(value.replace(',', '.'))
+        return True
+    except ValueError:
+        return False
+
+
+def _looks_date(value: str) -> bool:
+    raw = value.replace('-', '').replace('/', '')
+    return raw.isdigit() and len(raw) in {6, 8}
+
+
+def profile_field(name: str, values: Iterable[Any], *, sample_limit: int = 12) -> FieldProfile:
+    string_values = [_stringify(v) for v in values]
+    primitive_type, signals = infer_primitive_type(string_values, name)
+    non_null = [v for v in string_values if v != '']
+    sample_counter = Counter(non_null)
+    samples = [value for value, _ in sample_counter.most_common(sample_limit)]
+    return FieldProfile(
+        name=name,
+        primitive_type=primitive_type,
+        non_null_count=len(non_null),
+        null_count=len(string_values) - len(non_null),
+        distinct_sample_count=len(set(non_null[:1000])),
+        samples=samples,
+        signals=signals,
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/tables.py
+###############################################################################
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from hashlib import sha1
+from pathlib import Path
+from typing import Any
+
+from ..decode.dbase import iter_dbase_rows, load_dbase_metadata
+from .fields import FieldProfile, profile_field
+
+
+@dataclass(frozen=True)
+class TableProfile:
+    path: str
+    file_format: str
+    row_count_sampled: int
+    field_names: list[str]
+    schema_signature: str
+    field_profiles: list[FieldProfile]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'path': self.path,
+            'file_format': self.file_format,
+            'row_count_sampled': self.row_count_sampled,
+            'field_names': self.field_names,
+            'schema_signature': self.schema_signature,
+            'field_profiles': [fp.to_dict() for fp in self.field_profiles],
+        }
+
+
+def profile_dbase_file(path: str, *, sample_rows: int = 500) -> TableProfile:
+    metadata = load_dbase_metadata(path)
+    values_by_field: dict[str, list[Any]] = defaultdict(list)
+    sampled = 0
+    for row in iter_dbase_rows(path):
+        sampled += 1
+        for field_name in metadata.field_names:
+            values_by_field[field_name].append(row.fields.get(field_name))
+        if sampled >= sample_rows:
+            break
+    field_profiles = [profile_field(name, values_by_field.get(name, [])) for name in metadata.field_names]
+    schema_signature = sha1('|'.join(metadata.field_names).encode('utf-8')).hexdigest()[:16]
+    return TableProfile(
+        path=str(Path(path)),
+        file_format=metadata.file_format,
+        row_count_sampled=sampled,
+        field_names=metadata.field_names,
+        schema_signature=schema_signature,
+        field_profiles=field_profiles,
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/__init__.py
+###############################################################################
+from .apply import TranslatedFieldProfile, translate_field_samples, translate_row_fields
+from .bundle import TranslationBundle, build_translation_bundle
+from .grammar import TranslationGrammarError, emit_translation_grammar, parse_translation_grammar, parse_translation_grammar_file
+from .registry import TranslationRegistry, VariableTranslation
+from .validate import TranslationValidationReport, validate_translation_registry
+
+__all__ = [
+    'TranslatedFieldProfile',
+    'translate_field_samples',
+    'translate_row_fields',
+    'TranslationBundle',
+    'build_translation_bundle',
+    'TranslationGrammarError',
+    'emit_translation_grammar',
+    'parse_translation_grammar',
+    'parse_translation_grammar_file',
+    'TranslationRegistry',
+    'VariableTranslation',
+    'TranslationValidationReport',
+    'validate_translation_registry',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/apply.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from .registry import TranslationRegistry, VariableTranslation
+
+
+@dataclass(frozen=True)
+class TranslatedFieldProfile:
+    variable: str
+    scope: str
+    kind: str | None
+    label: str | None
+    rules: list[str]
+    aliases: list[str]
+    samples: list[dict[str, str]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _translate_scalar(value: Any, entry: VariableTranslation | None) -> Any:
+    if entry is None or value is None:
+        return value
+    raw = str(value).strip()
+    if raw == '':
+        return None
+    if entry.kind == 'cat':
+        return entry.value_map.get(raw, raw)
+    result: Any = raw
+    for rule in entry.rules:
+        result = _apply_rule(result, rule)
+    return result
+
+
+def _apply_rule(value: Any, rule: str) -> Any:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == '':
+        return None
+    if rule == 'ibge6':
+        digits = ''.join(ch for ch in text if ch.isdigit())
+        return digits[:6] if len(digits) >= 6 else digits
+    if rule == 'ibge7':
+        digits = ''.join(ch for ch in text if ch.isdigit())
+        return digits[:7] if len(digits) >= 7 else digits
+    if rule == 'cid10':
+        return text.upper().replace('.', '')
+    if rule == 'date8':
+        digits = ''.join(ch for ch in text if ch.isdigit())
+        return digits if len(digits) == 8 else text
+    return text
+
+
+def translate_field_samples(variable: str, raw_samples: list[str], registry: TranslationRegistry, *, scope: str | None = None) -> TranslatedFieldProfile:
+    entry = registry.resolve(variable, scope=scope)
+    translated_samples = []
+    for raw in raw_samples:
+        translated_samples.append({'raw': raw, 'label': _translate_scalar(raw, entry) if entry else raw})
+    return TranslatedFieldProfile(
+        variable=variable,
+        scope=scope or 'GLOBAL',
+        kind=entry.kind if entry else None,
+        label=entry.label if entry else None,
+        rules=list(entry.rules) if entry else [],
+        aliases=list(entry.aliases) if entry else [],
+        samples=translated_samples,
+    )
+
+
+def translate_row_fields(fields: dict[str, Any], registry: TranslationRegistry, *, scope: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for field_name, value in fields.items():
+        entry = registry.resolve(field_name, scope=scope)
+        out[field_name] = _translate_scalar(value, entry)
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/grammar.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from .registry import TranslationRegistry, VariableTranslation
+
+
+class TranslationGrammarError(ValueError):
+    pass
+
+
+@dataclass
+class _Builder:
+    scope: str
+    variable: str
+    kind: str
+    label: str
+    value_map: dict[str, str]
+    rules: list[str]
+    aliases: list[str]
+    sources: list[str]
+
+    def freeze(self) -> VariableTranslation:
+        return VariableTranslation(
+            scope=self.scope,
+            variable=self.variable,
+            kind=self.kind,
+            label=self.label,
+            value_map=dict(self.value_map),
+            rules=list(self.rules),
+            aliases=list(self.aliases),
+            sources=list(self.sources),
+        )
+
+
+def parse_translation_grammar(text: str) -> TranslationRegistry:
+    entries: list[VariableTranslation] = []
+    current: _Builder | None = None
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        head = line[0]
+        body = line[1:].strip()
+        if head == '$':
+            if current is not None:
+                entries.append(current.freeze())
+            parts = body.split(maxsplit=2)
+            if len(parts) < 3:
+                raise TranslationGrammarError(f'Line {line_no}: global variable line must be "$ VAR KIND LABEL"')
+            current = _Builder(scope='GLOBAL', variable=parts[0], kind=parts[1], label=parts[2], value_map={}, rules=[], aliases=[], sources=[])
+            continue
+        if head == '@':
+            if current is not None:
+                entries.append(current.freeze())
+            parts = body.split(maxsplit=3)
+            if len(parts) < 4:
+                raise TranslationGrammarError(f'Line {line_no}: scoped variable line must be "@ SCOPE VAR KIND LABEL"')
+            current = _Builder(scope=parts[0], variable=parts[1], kind=parts[2], label=parts[3], value_map={}, rules=[], aliases=[], sources=[])
+            continue
+        if current is None:
+            raise TranslationGrammarError(f'Line {line_no}: mapping/rule line without active variable block')
+        if head == '=':
+            parts = body.split(maxsplit=1)
+            if len(parts) < 2:
+                raise TranslationGrammarError(f'Line {line_no}: value map line must be "= RAW LABEL"')
+            current.value_map[parts[0]] = parts[1]
+        elif head == '>':
+            current.rules.extend(token for token in body.split() if token)
+        elif head == '~':
+            current.aliases.extend(token for token in body.split() if token)
+        elif head == '%':
+            current.sources.extend(token for token in body.split() if token)
+        else:
+            raise TranslationGrammarError(f'Line {line_no}: unknown directive {head!r}')
+    if current is not None:
+        entries.append(current.freeze())
+    return TranslationRegistry(entries)
+
+
+def parse_translation_grammar_file(path: str | Path) -> TranslationRegistry:
+    return parse_translation_grammar(Path(path).read_text(encoding='utf-8'))
+
+
+def emit_translation_grammar(registry: TranslationRegistry) -> str:
+    lines: list[str] = []
+    for entry in sorted(registry.entries, key=lambda item: (item.scope.upper(), item.variable.upper())):
+        if entry.scope.upper() == 'GLOBAL':
+            lines.append(f'$ {entry.variable} {entry.kind} {entry.label}')
+        else:
+            lines.append(f'@ {entry.scope} {entry.variable} {entry.kind} {entry.label}')
+        if entry.aliases:
+            lines.append('~ ' + ' '.join(entry.aliases))
+        if entry.rules:
+            lines.append('> ' + ' '.join(entry.rules))
+        if entry.sources:
+            lines.append('% ' + ' '.join(entry.sources))
+        for raw, label in sorted(entry.value_map.items()):
+            lines.append(f'= {raw} {label}')
+        lines.append('')
+    return '\n'.join(lines).rstrip() + ('\n' if lines else '')
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/registry.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from typing import Any, Iterable
+
+
+@dataclass(frozen=True)
+class VariableTranslation:
+    scope: str
+    variable: str
+    kind: str
+    label: str
+    value_map: dict[str, str] = field(default_factory=dict)
+    rules: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class TranslationRegistry:
+    def __init__(self, entries: list[VariableTranslation]) -> None:
+        self.entries = entries
+        self._by_scope_var = {(e.scope.upper(), e.variable.upper()): e for e in entries}
+        self._by_alias: dict[tuple[str, str], VariableTranslation] = {}
+        for entry in entries:
+            for alias in entry.aliases:
+                self._by_alias[(entry.scope.upper(), alias.upper())] = entry
+                if entry.scope.upper() != 'GLOBAL':
+                    self._by_alias[('GLOBAL', alias.upper())] = entry
+
+    def resolve(self, variable: str, *, scope: str | None = None) -> VariableTranslation | None:
+        variable_u = variable.upper()
+        if scope:
+            scope_u = scope.upper()
+            hit = self._by_scope_var.get((scope_u, variable_u)) or self._by_alias.get((scope_u, variable_u))
+            if hit is not None:
+                return hit
+        return self._by_scope_var.get(('GLOBAL', variable_u)) or self._by_alias.get(('GLOBAL', variable_u))
+
+    def merge(self, *others: 'TranslationRegistry') -> 'TranslationRegistry':
+        merged: dict[tuple[str, str], VariableTranslation] = {
+            (entry.scope.upper(), entry.variable.upper()): entry for entry in self.entries
+        }
+        for other in others:
+            for entry in other.entries:
+                merged[(entry.scope.upper(), entry.variable.upper())] = entry
+        return TranslationRegistry(list(merged.values()))
+
+    def coverage_for_variables(self, variables: Iterable[str], *, scopes: Iterable[str] | None = None) -> dict[str, Any]:
+        coverage_scopes = [scope for scope in (scopes or []) if scope]
+        covered: list[str] = []
+        missing: list[str] = []
+        for variable in sorted({str(value).upper() for value in variables if str(value).strip()}):
+            hit = None
+            for scope in coverage_scopes:
+                hit = self.resolve(variable, scope=scope)
+                if hit is not None:
+                    break
+            if hit is None:
+                hit = self.resolve(variable)
+            if hit is None:
+                missing.append(variable)
+            else:
+                covered.append(variable)
+        return {
+            'variable_count': len(covered) + len(missing),
+            'covered_count': len(covered),
+            'missing_count': len(missing),
+            'covered': covered,
+            'missing': missing,
+        }
+
+    def to_dict(self) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in self.entries]
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/validate.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from .registry import TranslationRegistry
+
+_ALLOWED_KINDS = {'cat', 'date', 'mun', 'uf', 'num', 'txt', 'code', 'id', 'flag', 'unknown'}
+
+
+@dataclass(frozen=True)
+class TranslationValidationReport:
+    errors: list[str]
+    warnings: list[str]
+    entry_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def validate_translation_registry(registry: TranslationRegistry) -> TranslationValidationReport:
+    errors: list[str] = []
+    warnings: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in registry.entries:
+        key = (entry.scope.upper(), entry.variable.upper())
+        if key in seen:
+            errors.append(f'duplicate entry for {entry.scope}:{entry.variable}')
+        seen.add(key)
+        if entry.kind not in _ALLOWED_KINDS:
+            errors.append(f'unknown kind {entry.kind!r} for {entry.scope}:{entry.variable}')
+        if entry.kind == 'cat' and not entry.value_map:
+            warnings.append(f'categorical variable without value map: {entry.scope}:{entry.variable}')
+        if entry.kind != 'cat' and entry.value_map:
+            warnings.append(f'non-categorical variable has value map: {entry.scope}:{entry.variable}')
+        if not entry.label.strip():
+            errors.append(f'empty label for {entry.scope}:{entry.variable}')
+    return TranslationValidationReport(errors=errors, warnings=warnings, entry_count=len(registry.entries))
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/__init__.py
+###############################################################################
+"""Canonical PegaSUS structures and compilers."""
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/canonical/__init__.py
+###############################################################################
+from .schema import CanonicalRecord, CompiledObservable
+
+__all__ = ["CanonicalRecord", "CompiledObservable"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/canonical/schema.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class CanonicalRecord:
+    support: dict[str, Any]
+    support_role: str
+    source: dict[str, Any]
+    event_type: str
+    code_roles: dict[str, list[str]]
+    subgroups: dict[str, Any]
+    continuous: dict[str, Any]
+    annotations: dict[str, Any]
+    weight: float
+    quality: dict[str, Any]
+    provenance: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CompiledObservable:
+    family: str
+    support_role: str
+    support_grain: list[str]
+    measure: str
+    representation: str
+    values: list[dict[str, Any]]
+    lineage: dict[str, Any]
+    uncertainty: dict[str, Any]
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/canonical/validators.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .schema import CanonicalRecord
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    valid: bool
+    errors: list[str]
+    warnings: list[str]
+
+
+def validate_canonical_record(record: CanonicalRecord) -> ValidationResult:
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not record.support_role:
+        errors.append("missing_support_role")
+    if not record.event_type:
+        errors.append("missing_event_type")
+    municipality = record.support.get("municipality")
+    if municipality is None:
+        warnings.append("missing_support_municipality")
+    if record.quality.get("included") is not True:
+        warnings.append("record_marked_excluded")
+    return ValidationResult(valid=not errors, errors=errors, warnings=warnings)
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/compiler/__init__.py
+###############################################################################
+from .counts import compile_counts
+from .thresholds import compile_threshold_counts
+from .rates import compile_rates
+from .code_counts import compile_code_query_counts
+
+__all__ = ["compile_counts", "compile_threshold_counts", "compile_rates", "compile_code_query_counts"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/compiler/code_counts.py
+###############################################################################
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Iterable, Sequence
+
+from ..canonical.schema import CanonicalRecord, CompiledObservable
+from ..registry.codes import CodeQuery, any_code_matches
+
+
+def compile_code_query_counts(
+    records: Iterable[CanonicalRecord],
+    *,
+    family: str,
+    query: CodeQuery,
+    support_keys: Sequence[str],
+    subgroup_keys: Sequence[str] = (),
+) -> CompiledObservable:
+    counts: dict[tuple, float] = defaultdict(float)
+    sources: set[str] = set()
+    support_role: str | None = None
+    for record in records:
+        role_values = record.code_roles.get(query.role, [])
+        annotation_values: list[str] = []
+        for value in record.annotations.values():
+            if isinstance(value, list):
+                annotation_values.extend(str(item) for item in value)
+        if not (any_code_matches(role_values, query) or any_code_matches(annotation_values, query)):
+            continue
+        support_role = support_role or record.support_role
+        sources.add(record.source.get("system", ""))
+        key = tuple(record.support.get(name) for name in support_keys) + tuple(record.subgroups.get(name) for name in subgroup_keys)
+        counts[key] += float(record.weight)
+    values: list[dict] = []
+    for key, value in sorted(counts.items()):
+        row = {name: key[idx] for idx, name in enumerate(support_keys)}
+        offset = len(support_keys)
+        for idx, name in enumerate(subgroup_keys):
+            row[name] = key[offset + idx]
+        row["value"] = value
+        values.append(row)
+    return CompiledObservable(
+        family=family,
+        support_role=support_role or "unknown",
+        support_grain=list(support_keys),
+        measure="count",
+        representation="extensive",
+        values=values,
+        lineage={
+            "sources": sorted(filter(None, sources)),
+            "compiler": "compile_code_query_counts",
+            "query": {
+                "role": query.role,
+                "system": query.system,
+                "node": query.node,
+                "descendants": query.descendants,
+            },
+        },
+        uncertainty={"count_model": "poisson", "notes": []},
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/compiler/counts.py
+###############################################################################
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Iterable, Sequence
+
+from ..canonical.schema import CanonicalRecord, CompiledObservable
+
+
+def compile_counts(records: Iterable[CanonicalRecord], *, family: str, support_keys: Sequence[str], subgroup_keys: Sequence[str] = ()) -> CompiledObservable:
+    counts: dict[tuple, float] = defaultdict(float)
+    source_systems: set[str] = set()
+    support_role = None
+    for record in records:
+        support_role = support_role or record.support_role
+        source_systems.add(record.source.get("system", ""))
+        key = tuple(record.support.get(name) for name in support_keys) + tuple(record.subgroups.get(name) for name in subgroup_keys)
+        counts[key] += float(record.weight)
+    values = []
+    for key, value in sorted(counts.items()):
+        row = {name: key[idx] for idx, name in enumerate(support_keys)}
+        offset = len(support_keys)
+        for idx, name in enumerate(subgroup_keys):
+            row[name] = key[offset + idx]
+        row["value"] = value
+        values.append(row)
+    return CompiledObservable(
+        family=family,
+        support_role=support_role or "unknown",
+        support_grain=list(support_keys),
+        measure="count",
+        representation="extensive",
+        values=values,
+        lineage={"sources": sorted(source_systems), "compiler": "compile_counts"},
+        uncertainty={"count_model": "poisson", "notes": []},
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/compiler/rates.py
+###############################################################################
+from __future__ import annotations
+
+from typing import Iterable
+
+from ..canonical.schema import CompiledObservable
+
+
+def compile_rates(*, numerator: CompiledObservable, denominator_rows: list[dict], family: str, alpha: float = 0.5, beta: float = 0.5) -> CompiledObservable:
+    denominator_index = {tuple((key, value) for key, value in row.items() if key != "value"): float(row["value"]) for row in denominator_rows}
+    values: list[dict] = []
+    for row in numerator.values:
+        key = tuple((name, value) for name, value in row.items() if name != "value")
+        denom = denominator_index.get(key)
+        if denom is None or denom <= 0:
+            continue
+        num = float(row["value"])
+        shrunk = (num + alpha) / (denom + alpha + beta)
+        out = dict(row)
+        out["denominator"] = denom
+        out["value"] = shrunk
+        values.append(out)
+    return CompiledObservable(
+        family=family,
+        support_role=numerator.support_role,
+        support_grain=numerator.support_grain,
+        measure="rate",
+        representation="shrunk_rate",
+        values=values,
+        lineage={**numerator.lineage, "compiler": "compile_rates"},
+        uncertainty={"notes": ["beta-binomial style shrinkage"], "alpha": alpha, "beta": beta},
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/compiler/thresholds.py
+###############################################################################
+from __future__ import annotations
+
+from typing import Callable, Iterable, Sequence
+
+from .counts import compile_counts
+from ..canonical.schema import CanonicalRecord, CompiledObservable
+
+
+def compile_threshold_counts(records: Iterable[CanonicalRecord], *, family: str, support_keys: Sequence[str], field_name: str, predicate: Callable[[object], bool], subgroup_keys: Sequence[str] = ()) -> CompiledObservable:
+    filtered = [record for record in records if predicate(record.continuous.get(field_name))]
+    return compile_counts(filtered, family=family, support_keys=support_keys, subgroup_keys=subgroup_keys)
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/registry/__init__.py
+###############################################################################
+from .sources import SOURCE_REGISTRY
+from .fields import FIELD_REGISTRY
+from .support import SupportPoint, normalize_municipality_code, parse_datasus_date, support_from_date_and_municipality
+from .codes import CodeQuery, normalize_code, normalize_codes, code_matches_query, any_code_matches
+
+__all__ = [
+    "SOURCE_REGISTRY",
+    "FIELD_REGISTRY",
+    "SupportPoint",
+    "normalize_municipality_code",
+    "parse_datasus_date",
+    "support_from_date_and_municipality",
+    "CodeQuery",
+    "normalize_code",
+    "normalize_codes",
+    "code_matches_query",
+    "any_code_matches",
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/registry/codes.py
+###############################################################################
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Iterable
+
+
+_CODE_CLEAN = re.compile(r"[^A-Z0-9]")
+
+
+@dataclass(frozen=True)
+class CodeQuery:
+    role: str
+    system: str
+    node: str
+    descendants: bool = True
+
+
+def normalize_code(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = _CODE_CLEAN.sub("", value.upper())
+    return cleaned or None
+
+
+def normalize_codes(values: Iterable[str | None]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        code = normalize_code(value)
+        if code and code not in seen:
+            out.append(code)
+            seen.add(code)
+    return out
+
+
+def code_matches_query(code: str | None, query: CodeQuery) -> bool:
+    norm_code = normalize_code(code)
+    if not norm_code:
+        return False
+    node = normalize_code(query.node)
+    if not node:
+        return False
+    if not query.descendants:
+        return norm_code == node
+    if "-" in query.node:
+        left, right = [normalize_code(part) for part in query.node.split("-", 1)]
+        if not left or not right:
+            return False
+        return left <= norm_code[:len(left)] <= right
+    return norm_code.startswith(node)
+
+
+def any_code_matches(codes: Iterable[str | None], query: CodeQuery) -> bool:
+    return any(code_matches_query(code, query) for code in codes)
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/registry/fields.py
+###############################################################################
+FIELD_REGISTRY = {
+    'SINASC': {
+        'CODMUNNASC': 'support.municipality',
+        'CODMUNRES': 'support.municipality_residence',
+        'DTNASC': 'support.date',
+        'SEXO': 'subgroups.sex',
+        'PESO': 'continuous.birth_weight_g',
+        'APGAR1': 'continuous.apgar_1m',
+        'APGAR5': 'continuous.apgar_5m',
+        'CODANOMAL': 'code_roles.anomaly',
+        'CODANOMAL1': 'annotations.anomaly_slots',
+        'CODANOMAL2': 'annotations.anomaly_slots',
+        'CODANOMAL3': 'annotations.anomaly_slots',
+        'CODANOMAL4': 'annotations.anomaly_slots',
+    },
+    'SIM': {
+        'CODMUNOCOR': 'support.municipality',
+        'CODMUNRES': 'support.municipality_residence',
+        'DTOBITO': 'support.date',
+        'CAUSABAS': 'code_roles.cause_of_death',
+    },
+    'SINAN': {
+        'ID_MN_RESI': 'support.municipality',
+        'MUN_RESI': 'support.municipality',
+        'DT_NOTIFIC': 'support.date',
+        'CS_SEXO': 'subgroups.sex',
+        'ID_AGRAVO': 'code_roles.condition',
+        'AGRAVO': 'code_roles.condition',
+        'CID10': 'code_roles.condition',
+    },
+    'SIH': {
+        'MUNIC_MOV': 'support.municipality',
+        'MUNIC_RES': 'support.municipality_residence',
+        'DT_INTER': 'support.date',
+        'DIAG_PRINC': 'code_roles.diagnosis',
+        'PROC_REA': 'code_roles.procedure',
+    },
+}
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/registry/sources.py
+###############################################################################
+SOURCE_REGISTRY = {
+    'SINASC': {
+        'source_family': 'datasus',
+        'support_role': 'birth_occurrence',
+        'event_type': 'birth',
+        'dataset': 'DN',
+        'code_roles': ['anomaly'],
+    },
+    'SIM': {
+        'source_family': 'datasus',
+        'support_role': 'death_occurrence',
+        'event_type': 'death',
+        'dataset': 'DO',
+        'code_roles': ['cause_of_death', 'associated_cause'],
+    },
+    'SINAN': {
+        'source_family': 'datasus',
+        'support_role': 'notification_residence',
+        'event_type': 'notification',
+        'dataset': 'NOTIFIC',
+        'code_roles': ['condition'],
+    },
+    'SIH': {
+        'source_family': 'datasus',
+        'support_role': 'hospitalization_occurrence',
+        'event_type': 'hospitalization',
+        'dataset': 'AIH',
+        'code_roles': ['diagnosis', 'secondary_diagnosis', 'procedure'],
+    },
+    'SIDRA': {
+        'source_family': 'sidra',
+        'support_role': 'aggregate_context',
+        'event_type': 'aggregate_context',
+        'dataset': None,
+        'code_roles': [],
+    },
+}
+
+
+
+###############################################################################
+### FILE: pegasus_data/pegasus/registry/support.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any
+
+
+@dataclass(frozen=True)
+class SupportPoint:
+    municipality: str | None
+    year: int | None
+    month: int | None
+    day: str | None
+
+
+def normalize_municipality_code(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    digits = "".join(ch for ch in str(value).strip() if ch.isdigit())
+    if len(digits) == 6:
+        return digits + "0"
+    if len(digits) == 7:
+        return digits
+    return None
+
+
+def parse_datasus_date(value: Any) -> date | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%d%m%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def support_from_date_and_municipality(*, municipality: Any, date_value: Any) -> SupportPoint:
+    dt = parse_datasus_date(date_value)
+    return SupportPoint(
+        municipality=normalize_municipality_code(municipality),
+        year=dt.year if dt else None,
+        month=dt.month if dt else None,
+        day=dt.isoformat() if dt else None,
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/__init__.py
+###############################################################################
+"""SIDRA catalog, search, and value loading."""
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/__init__.py
+###############################################################################
+try:
+    from .ingest import ingest_table, ingest_by_coverage
+except ModuleNotFoundError as exc:
+    _INGEST_IMPORT_ERROR = exc
+
+    def ingest_table(*args, **kwargs):
+        raise ModuleNotFoundError('SIDRA ingestion requires optional runtime dependencies') from _INGEST_IMPORT_ERROR
+
+    def ingest_by_coverage(*args, **kwargs):
+        raise ModuleNotFoundError('SIDRA ingestion requires optional runtime dependencies') from _INGEST_IMPORT_ERROR
+
+from .search import search_tables
+
+__all__ = ["ingest_table", "ingest_by_coverage", "search_tables"]
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/api.py
+###############################################################################
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Mapping
+
+import httpx
+
+from ...common.hashing import sha256_text
+from ...config import get_settings
+from .db import create_connection
+from .schema import ensure_schema
+
+
+class SidraApiError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class CachedResponse:
+    request_key: str
+    endpoint_path: str
+    params_json: str
+    response_json: str
+    fetched_at: str
+
+
+class SidraApiClient:
+    def __init__(self, *, timeout: float | None = None) -> None:
+        settings = get_settings()
+        t = float(timeout or settings.sidra_request_timeout_seconds)
+        self._pause_seconds = settings.sidra_pause_seconds
+        self._semaphore = asyncio.Semaphore(settings.sidra_concurrent_requests)
+        self._client = httpx.AsyncClient(
+            base_url=settings.sidra_base_url,
+            timeout=httpx.Timeout(connect=t, read=t, write=t, pool=t),
+            headers={"User-Agent": settings.user_agent},
+            limits=httpx.Limits(
+                max_connections=settings.sidra_max_connections,
+                max_keepalive_connections=settings.sidra_concurrent_requests,
+            ),
+        )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        await self.close()
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def _get_json(self, path: str, params: Mapping[str, Any] | None = None) -> Any:
+        settings = get_settings()
+        last_error: Exception | None = None
+        for attempt in range(1, settings.sidra_request_retries + 1):
+            try:
+                async with self._semaphore:
+                    response = await self._client.get(path, params=params)
+                    await asyncio.sleep(self._pause_seconds)
+                if response.status_code in {429, 500, 502, 503, 504}:
+                    raise SidraApiError(f"SIDRA API failed {response.status_code}: {response.text[:200]}")
+                if response.status_code >= 400:
+                    raise RuntimeError(f"SIDRA API failed {response.status_code}: {response.text[:200]}")
+                return response.json()
+            except (httpx.TransportError, SidraApiError) as exc:
+                last_error = exc
+                if attempt >= settings.sidra_request_retries:
+                    raise
+                await asyncio.sleep(min(10.0, 2 ** (attempt - 1)))
+        assert last_error is not None
+        raise last_error
+
+    async def fetch_catalog(
+        self,
+        *,
+        subject_id: int | None = None,
+        periodicity: str | None = None,
+        levels: list[str] | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {}
+        if subject_id is not None:
+            params["assunto"] = subject_id
+        if periodicity:
+            params["periodicidade"] = periodicity
+        if levels:
+            params["nivel"] = "|".join(level.upper() for level in levels)
+        return await self._get_json("", params or None)
+
+    async def fetch_metadata(self, aggregate_id: int) -> Any:
+        return await self._get_json(f"/{aggregate_id}/metadados")
+
+    async def fetch_periods(self, aggregate_id: int) -> Any:
+        return await self._get_json(f"/{aggregate_id}/periodos")
+
+    async def fetch_localities(self, aggregate_id: int, level: str) -> Any:
+        return await self._get_json(f"/{aggregate_id}/localidades/{level}")
+
+    async def fetch_values(
+        self,
+        *,
+        aggregate_id: int,
+        variable_id: int | str,
+        periods: str | None = None,
+        localities: str,
+        classification: str | None = None,
+        view: str | None = None,
+        use_cache: bool = True,
+    ) -> Any:
+        if periods:
+            endpoint = f"/{aggregate_id}/periodos/{periods}/variaveis/{variable_id}"
+        else:
+            endpoint = f"/{aggregate_id}/variaveis/{variable_id}"
+        params: dict[str, Any] = {"localidades": localities}
+        if classification:
+            params["classificacao"] = classification
+        if view:
+            params["view"] = view
+        request_key = sha256_text(endpoint + "?" + json.dumps(params, sort_keys=True, ensure_ascii=False))
+        if use_cache:
+            cached = self._read_cached_response(request_key)
+            if cached is not None:
+                return json.loads(cached.response_json)
+        payload = await self._get_json(endpoint, params)
+        self._write_cached_response(request_key, endpoint, params, payload)
+        return payload
+
+    def _read_cached_response(self, request_key: str) -> CachedResponse | None:
+        ensure_schema()
+        conn = create_connection()
+        try:
+            row = conn.execute(
+                "SELECT request_key, endpoint_path, params_json, response_json, fetched_at FROM raw_value_cache WHERE request_key=?",
+                (request_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            return CachedResponse(**dict(row))
+        finally:
+            conn.close()
+
+    def _write_cached_response(
+        self,
+        request_key: str,
+        endpoint_path: str,
+        params: Mapping[str, Any],
+        payload: Any,
+    ) -> None:
+        ensure_schema()
+        conn = create_connection()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO raw_value_cache(request_key, endpoint_path, params_json, response_json, fetched_at) VALUES(?,?,?,?,?)",
+                (
+                    request_key,
+                    endpoint_path,
+                    json.dumps(dict(params), ensure_ascii=False, sort_keys=True),
+                    json.dumps(payload, ensure_ascii=False),
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/coverage.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class _Cmp:
+    op: str
+    ident: str
+    number: int
+
+
+@dataclass(frozen=True)
+class _Not:
+    node: Any
+
+
+@dataclass(frozen=True)
+class _And:
+    left: Any
+    right: Any
+
+
+@dataclass(frozen=True)
+class _Or:
+    left: Any
+    right: Any
+
+
+class _Parser:
+    def __init__(self, text: str) -> None:
+        self.tokens = self._tokenize(text)
+        self.index = 0
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        spaced = text.replace("(", " ( ").replace(")", " ) ")
+        return [token for token in spaced.split() if token]
+
+    def _peek(self) -> str:
+        return self.tokens[self.index] if self.index < len(self.tokens) else "EOF"
+
+    def _eat(self, value: str | None = None) -> str:
+        token = self._peek()
+        if value is not None and token != value:
+            raise SyntaxError(f"Expected {value}, got {token}")
+        self.index += 1
+        return token
+
+    def parse(self) -> Any:
+        node = self._expr()
+        if self._peek() != "EOF":
+            raise SyntaxError(f"Unexpected token {self._peek()}")
+        return node
+
+    def _expr(self) -> Any:
+        node = self._and()
+        while self._peek().upper() == "OR":
+            self._eat()
+            node = _Or(node, self._and())
+        return node
+
+    def _and(self) -> Any:
+        node = self._unary()
+        while self._peek().upper() == "AND":
+            self._eat()
+            node = _And(node, self._unary())
+        return node
+
+    def _unary(self) -> Any:
+        if self._peek().upper() == "NOT":
+            self._eat()
+            return _Not(self._unary())
+        return self._primary()
+
+    def _primary(self) -> Any:
+        if self._peek() == "(":
+            self._eat("(")
+            node = self._expr()
+            self._eat(")")
+            return node
+        return self._cmp()
+
+    def _cmp(self) -> Any:
+        ident = self._eat().upper()
+        token = self._peek()
+        if token == "EOF" or token in {"AND", "OR", ")"}:
+            return _Cmp(">=", ident, 1)
+        op = self._eat()
+        number = int(self._eat())
+        if op == "=":
+            op = "=="
+        return _Cmp(op, ident, number)
+
+
+def parse_coverage_expr(text: str) -> Any:
+    return _Parser(text).parse()
+
+
+def extract_levels(node: Any) -> set[str]:
+    levels: set[str] = set()
+    def walk(cur: Any) -> None:
+        if isinstance(cur, _Cmp):
+            levels.add(cur.ident)
+        elif isinstance(cur, _Not):
+            walk(cur.node)
+        elif isinstance(cur, (_And, _Or)):
+            walk(cur.left)
+            walk(cur.right)
+    walk(node)
+    return levels
+
+
+def eval_coverage(node: Any, counts: dict[str, int]) -> bool:
+    def cmp(op: str, left: int, right: int) -> bool:
+        return {">=": left >= right, ">": left > right, "<=": left <= right, "<": left < right, "==": left == right, "!=": left != right}[op]
+    def walk(cur: Any) -> bool:
+        if isinstance(cur, _Cmp):
+            return cmp(cur.op, int(counts.get(cur.ident, 0)), cur.number)
+        if isinstance(cur, _Not):
+            return not walk(cur.node)
+        if isinstance(cur, _And):
+            return walk(cur.left) and walk(cur.right)
+        if isinstance(cur, _Or):
+            return walk(cur.left) or walk(cur.right)
+        raise TypeError(cur)
+    return walk(node)
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/db.py
+###############################################################################
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from ...common.storage import ensure_parent
+from ...config import get_settings
+
+
+def create_connection(path: str | None = None) -> sqlite3.Connection:
+    db_path = Path(path or get_settings().sidra_catalog_db_path)
+    ensure_parent(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/ingest.py
+###############################################################################
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Sequence
+
+from ...common.hashing import sha256_text
+from ...common.text import normalize_basic
+from ...config import get_settings
+from .api import SidraApiClient
+from .coverage import eval_coverage, extract_levels, parse_coverage_expr
+from .db import create_connection
+from .links import build_links_for_table
+from .schema import ensure_schema
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _period_to_ord_kind(period_id: Any) -> tuple[int | None, str]:
+    digits = "".join(ch for ch in str(period_id or "") if ch.isdigit())
+    if len(digits) == 4:
+        return int(digits + "00"), "Y"
+    if len(digits) == 6:
+        return int(digits), "YM"
+    if len(digits) == 8:
+        return int(digits), "YMD"
+    return None, "UNK"
+
+
+def _canonical_table_text(metadata: dict[str, Any]) -> str:
+    periodicity = metadata.get("periodicidade") or {}
+    bits = [
+        f"id: {metadata.get('id')}",
+        f"titulo: {metadata.get('nome') or ''}",
+        f"pesquisa: {metadata.get('pesquisa') or ''}",
+        f"assunto: {metadata.get('assunto') or ''}",
+        f"frequencia: {(periodicity.get('frequencia') or '')}",
+        f"inicio: {(periodicity.get('inicio') or '')}",
+        f"fim: {(periodicity.get('fim') or '')}",
+        f"url: {metadata.get('URL') or metadata.get('url') or ''}",
+    ]
+    return "\n".join(bits)
+
+
+
+async def _fetch_locality_counts(client: SidraApiClient, aggregate_id: int, levels: list[str]) -> tuple[list[tuple[int, str, str, str, int]], list[tuple[int, str, str, str]], int, bool]:
+    level_rows: list[tuple[int, str, str, str, int]] = []
+    locality_rows: list[tuple[int, str, str, str]] = []
+    municipality_count = 0
+    for level in levels:
+        payload = await client.fetch_localities(aggregate_id, level)
+        count = 0
+        for item in payload or []:
+            locality_id = str(item.get("id") or item.get("codigo") or "")
+            name = item.get("nome") or item.get("label") or ""
+            if locality_id:
+                locality_rows.append((aggregate_id, level, locality_id, name))
+                count += 1
+        level_rows.append((aggregate_id, level, level, "nivel", count))
+        if level.upper() == "N6":
+            municipality_count = count
+    covers_nat = municipality_count >= get_settings().sidra_value_locality_chunk_size * 200
+    return level_rows, locality_rows, municipality_count, covers_nat
+
+
+async def ingest_table(table_id: int, *, client: SidraApiClient | None = None, build_links: bool = True) -> None:
+    ensure_schema()
+    own_client = client is None
+    if client is None:
+        client = SidraApiClient()
+    try:
+        metadata = await client.fetch_metadata(table_id)
+        periods = await client.fetch_periods(table_id)
+        levels = []
+        territorial = metadata.get("nivelTerritorial") or metadata.get("nivel territorial") or {}
+        if isinstance(territorial, dict):
+            for values in territorial.values():
+                if isinstance(values, list):
+                    for value in values:
+                        if isinstance(value, str):
+                            levels.append(value.upper())
+                        elif isinstance(value, dict) and value.get("id"):
+                            levels.append(str(value["id"]).upper())
+        levels = sorted(set(levels))
+        level_rows, locality_rows, municipality_count, covers_nat = await _fetch_locality_counts(client, table_id, levels)
+
+        variables = metadata.get("variaveis") or []
+        classifications = metadata.get("classificacoes") or []
+
+        var_rows = [
+            (int(item.get("id")), table_id, item.get("nome") or "", item.get("unidade"), json.dumps(item.get("sumarizacao") or [], ensure_ascii=False), sha256_text(f"{item.get('id')}||{item.get('nome')}||{item.get('unidade')}"))
+            for item in variables if item.get("id") is not None
+        ]
+        class_rows = [
+            (int(item.get("id")), table_id, item.get("nome") or "", int(bool(item.get("sumarizacao"))), json.dumps(item.get("sumarizacaoExcecao") or [], ensure_ascii=False))
+            for item in classifications if item.get("id") is not None
+        ]
+        cat_rows = []
+        for classification in classifications:
+            class_id = classification.get("id")
+            for category in classification.get("categorias") or []:
+                if class_id is None or category.get("id") is None:
+                    continue
+                cat_rows.append((
+                    table_id,
+                    int(class_id),
+                    int(category.get("id")),
+                    category.get("nome") or "",
+                    category.get("unidade"),
+                    category.get("nivel"),
+                    sha256_text(f"{class_id}||{category.get('id')}||{category.get('nome')}||{category.get('unidade')}")
+                ))
+
+        period_rows = []
+        for period in periods or []:
+            period_id = period.get("id") if isinstance(period, dict) else period
+            literals = period.get("literals", [period_id]) if isinstance(period, dict) else [period_id]
+            modification = period.get("modificacao") if isinstance(period, dict) else None
+            ord_value, kind = _period_to_ord_kind(period_id)
+            period_rows.append((table_id, str(period_id), json.dumps(literals, ensure_ascii=False), modification, ord_value, kind))
+
+        conn = create_connection()
+        try:
+            conn.execute("BEGIN")
+            conn.execute(
+                "INSERT OR REPLACE INTO agregados(id, nome, pesquisa, assunto, url, freq, periodo_inicio, periodo_fim, raw_json, fetched_at, municipality_locality_count, covers_national_municipalities) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    metadata.get("id"),
+                    metadata.get("nome"),
+                    metadata.get("pesquisa"),
+                    metadata.get("assunto"),
+                    metadata.get("URL") or metadata.get("url"),
+                    (metadata.get("periodicidade") or {}).get("frequencia"),
+                    (metadata.get("periodicidade") or {}).get("inicio"),
+                    (metadata.get("periodicidade") or {}).get("fim"),
+                    json.dumps(metadata, ensure_ascii=False),
+                    _now(),
+                    municipality_count,
+                    int(covers_nat),
+                ),
+            )
+            for table in ("localities", "agregados_levels", "categories", "classifications", "variables", "periods"):
+                conn.execute(f"DELETE FROM {table} WHERE agregado_id=?", (table_id,))
+            if level_rows:
+                conn.executemany("INSERT OR REPLACE INTO agregados_levels(agregado_id, level_id, level_name, level_type, locality_count) VALUES(?,?,?,?,?)", level_rows)
+            if var_rows:
+                conn.executemany("INSERT OR REPLACE INTO variables(id, agregado_id, nome, unidade, sumarizacao, text_hash) VALUES(?,?,?,?,?,?)", var_rows)
+            if class_rows:
+                conn.executemany("INSERT OR REPLACE INTO classifications(id, agregado_id, nome, sumarizacao_status, sumarizacao_excecao) VALUES(?,?,?,?,?)", class_rows)
+            if cat_rows:
+                conn.executemany("INSERT OR REPLACE INTO categories(agregado_id, classification_id, categoria_id, nome, unidade, nivel, text_hash) VALUES(?,?,?,?,?,?,?)", cat_rows)
+            if period_rows:
+                conn.executemany("INSERT OR REPLACE INTO periods(agregado_id, periodo_id, literals, modificacao, periodo_ord, periodo_kind) VALUES(?,?,?,?,?,?)", period_rows)
+            if locality_rows:
+                conn.executemany("INSERT OR REPLACE INTO localities(agregado_id, level_id, locality_id, nome) VALUES(?,?,?,?)", locality_rows)
+            conn.execute("INSERT INTO ingestion_log(agregado_id, stage, status, detail, run_at) VALUES(?,?,?,?,?)", (table_id, "metadata", "success", None, _now()))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        if build_links:
+            build_links_for_table(table_id)
+    finally:
+        if own_client:
+            await client.close()
+
+
+@dataclass(frozen=True)
+class CoverageIngestReport:
+    coverage: str
+    matched_table_ids: list[int]
+
+
+async def ingest_by_coverage(coverage: str, *, subject_contains: str | None = None, survey_contains: str | None = None, limit: int | None = None, concurrency: int = 4) -> CoverageIngestReport:
+    expr = parse_coverage_expr(coverage)
+    levels = sorted(extract_levels(expr))
+    async with SidraApiClient() as client:
+        catalog = await client.fetch_catalog(levels=levels or None)
+        candidates: list[dict[str, Any]] = []
+        for survey in catalog or []:
+            for ag in survey.get("agregados") or []:
+                title = ag.get("nome") or ""
+                survey_name = survey.get("nome") or ""
+                subject_name = ag.get("assunto") or survey.get("assunto") or ""
+                if subject_contains and normalize_basic(subject_contains) not in normalize_basic(subject_name):
+                    continue
+                if survey_contains and normalize_basic(survey_contains) not in normalize_basic(survey_name):
+                    continue
+                candidates.append({"id": int(ag["id"]), "title": title})
+        matched: list[int] = []
+        sem = asyncio.Semaphore(concurrency)
+        async def probe(table_id: int) -> None:
+            async with sem:
+                await ingest_table(table_id, client=client)
+                conn = create_connection()
+                try:
+                    rows = conn.execute("SELECT level_id, locality_count FROM agregados_levels WHERE agregado_id=?", (table_id,)).fetchall()
+                    counts = {str(row["level_id"]).upper(): int(row["locality_count"] or 0) for row in rows}
+                finally:
+                    conn.close()
+                if eval_coverage(expr, counts):
+                    matched.append(table_id)
+        tasks = [probe(item["id"]) for item in candidates[: limit or None]]
+        await asyncio.gather(*tasks)
+    return CoverageIngestReport(coverage=coverage, matched_table_ids=sorted(set(matched)))
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/links.py
+###############################################################################
+from __future__ import annotations
+
+import json
+
+from ...common.hashing import sha256_text
+from ...common.text import normalize_basic
+from .db import create_connection
+
+
+def build_links_for_table(table_id: int) -> dict[str, int]:
+    conn = create_connection()
+    try:
+        conn.execute("DELETE FROM name_keys WHERE table_id=?", (table_id,))
+        conn.execute("DELETE FROM link_var WHERE table_id=?", (table_id,))
+        conn.execute("DELETE FROM link_class WHERE table_id=?", (table_id,))
+        conn.execute("DELETE FROM link_cat WHERE table_id=?", (table_id,))
+
+        var_rows = conn.execute("SELECT id, nome FROM variables WHERE agregado_id=?", (table_id,)).fetchall()
+        class_rows = conn.execute("SELECT id, nome FROM classifications WHERE agregado_id=?", (table_id,)).fetchall()
+        cat_rows = conn.execute("SELECT classification_id, categoria_id, nome FROM categories WHERE agregado_id=?", (table_id,)).fetchall()
+
+        for row in var_rows:
+            key = normalize_basic(row["nome"])
+            if not key:
+                continue
+            conn.execute("INSERT OR IGNORE INTO name_keys(kind, key, table_id, entity_id) VALUES(?,?,?,?)", ("var", key, table_id, str(row["id"])))
+            conn.execute("INSERT OR IGNORE INTO link_var(var_key, table_id, variable_id) VALUES(?,?,?)", (key, table_id, int(row["id"])))
+
+        for row in class_rows:
+            key = normalize_basic(row["nome"])
+            if not key:
+                continue
+            conn.execute("INSERT OR IGNORE INTO name_keys(kind, key, table_id, entity_id) VALUES(?,?,?,?)", ("class", key, table_id, str(row["id"])))
+            conn.execute("INSERT OR IGNORE INTO link_class(class_key, table_id, class_id) VALUES(?,?,?)", (key, table_id, int(row["id"])))
+
+        class_name_map = {int(row["id"]): normalize_basic(row["nome"]) for row in class_rows}
+        for row in cat_rows:
+            class_key = class_name_map.get(int(row["classification_id"]), "")
+            cat_key = normalize_basic(row["nome"])
+            if not class_key or not cat_key:
+                continue
+            conn.execute("INSERT OR IGNORE INTO name_keys(kind, key, table_id, entity_id) VALUES(?,?,?,?)", ("cat", f"{class_key}::{cat_key}", table_id, f"{row['classification_id']}:{row['categoria_id']}"))
+            conn.execute(
+                "INSERT OR IGNORE INTO link_cat(class_key, cat_key, table_id, class_id, cat_id) VALUES(?,?,?,?,?)",
+                (class_key, cat_key, table_id, int(row["classification_id"]), int(row["categoria_id"])),
+            )
+        conn.commit()
+        return {
+            "vars": conn.execute("SELECT COUNT(*) FROM link_var WHERE table_id=?", (table_id,)).fetchone()[0],
+            "classes": conn.execute("SELECT COUNT(*) FROM link_class WHERE table_id=?", (table_id,)).fetchone()[0],
+            "cats": conn.execute("SELECT COUNT(*) FROM link_cat WHERE table_id=?", (table_id,)).fetchone()[0],
+        }
+    finally:
+        conn.close()
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/schema.py
+###############################################################################
+from __future__ import annotations
+
+from .db import create_connection
+
+SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS agregados (
+        id INTEGER PRIMARY KEY,
+        nome TEXT NOT NULL,
+        pesquisa TEXT,
+        assunto TEXT,
+        url TEXT,
+        freq TEXT,
+        periodo_inicio TEXT,
+        periodo_fim TEXT,
+        raw_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        municipality_locality_count INTEGER DEFAULT 0,
+        covers_national_municipalities INTEGER DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agregados_levels (
+        agregado_id INTEGER NOT NULL,
+        level_id TEXT NOT NULL,
+        level_name TEXT,
+        level_type TEXT NOT NULL,
+        locality_count INTEGER DEFAULT 0,
+        PRIMARY KEY (agregado_id, level_id, level_type)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS variables (
+        id INTEGER NOT NULL,
+        agregado_id INTEGER NOT NULL,
+        nome TEXT NOT NULL,
+        unidade TEXT,
+        sumarizacao TEXT,
+        text_hash TEXT NOT NULL,
+        PRIMARY KEY (agregado_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS classifications (
+        id INTEGER NOT NULL,
+        agregado_id INTEGER NOT NULL,
+        nome TEXT NOT NULL,
+        sumarizacao_status INTEGER,
+        sumarizacao_excecao TEXT,
+        PRIMARY KEY (agregado_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS categories (
+        agregado_id INTEGER NOT NULL,
+        classification_id INTEGER NOT NULL,
+        categoria_id INTEGER NOT NULL,
+        nome TEXT NOT NULL,
+        unidade TEXT,
+        nivel INTEGER,
+        text_hash TEXT NOT NULL,
+        PRIMARY KEY (agregado_id, classification_id, categoria_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS periods (
+        agregado_id INTEGER NOT NULL,
+        periodo_id TEXT NOT NULL,
+        literals TEXT,
+        modificacao TEXT,
+        periodo_ord INTEGER,
+        periodo_kind TEXT,
+        PRIMARY KEY (agregado_id, periodo_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS localities (
+        agregado_id INTEGER NOT NULL,
+        level_id TEXT NOT NULL,
+        locality_id TEXT NOT NULL,
+        nome TEXT,
+        PRIMARY KEY (agregado_id, level_id, locality_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS name_keys (
+        kind TEXT NOT NULL,
+        key TEXT NOT NULL,
+        table_id INTEGER NOT NULL,
+        entity_id TEXT,
+        PRIMARY KEY (kind, key, table_id, entity_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS link_var (
+        var_key TEXT NOT NULL,
+        table_id INTEGER NOT NULL,
+        variable_id INTEGER NOT NULL,
+        PRIMARY KEY (var_key, table_id, variable_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS link_class (
+        class_key TEXT NOT NULL,
+        table_id INTEGER NOT NULL,
+        class_id INTEGER NOT NULL,
+        PRIMARY KEY (class_key, table_id, class_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS link_cat (
+        class_key TEXT NOT NULL,
+        cat_key TEXT NOT NULL,
+        table_id INTEGER NOT NULL,
+        class_id INTEGER NOT NULL,
+        cat_id INTEGER NOT NULL,
+        PRIMARY KEY (class_key, cat_key, table_id, class_id, cat_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ingestion_log (
+        agregado_id INTEGER,
+        stage TEXT NOT NULL,
+        status TEXT NOT NULL,
+        detail TEXT,
+        run_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS raw_value_cache (
+        request_key TEXT PRIMARY KEY,
+        endpoint_path TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+    )
+    """,
+)
+
+
+def ensure_schema(path: str | None = None) -> None:
+    conn = create_connection(path)
+    try:
+        for statement in SCHEMA:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/search.py
+###############################################################################
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from ...common.text import normalize_basic
+from .coverage import eval_coverage
+from .db import create_connection
+from .where_expr import WhereNode, _And, _Cmp, _Contains, _Not, _Or, parse_where_expr
+
+
+@dataclass(frozen=True)
+class TableHit:
+    table_id: int
+    title: str
+    period_start: str | None
+    period_end: str | None
+    n3: int
+    n6: int
+    why: list[str]
+    score: float
+
+
+@dataclass(frozen=True)
+class SearchArgs:
+    q: str | None
+    limit: int = 20
+
+
+def _cmp(op: str, left: int, right: int) -> bool:
+    return {">=": left >= right, ">": left > right, "<=": left <= right, "<": left < right, "==": left == right, "!=": left != right}[op]
+
+
+def _load_context(table_id: int) -> dict[str, Any]:
+    conn = create_connection()
+    try:
+        head = conn.execute("SELECT nome, pesquisa, assunto, periodo_inicio, periodo_fim, municipality_locality_count, covers_national_municipalities FROM agregados WHERE id=?", (table_id,)).fetchone()
+        vars_ = [normalize_basic(row[0]) for row in conn.execute("SELECT nome FROM variables WHERE agregado_id=?", (table_id,)).fetchall()]
+        classes = [normalize_basic(row[0]) for row in conn.execute("SELECT nome FROM classifications WHERE agregado_id=?", (table_id,)).fetchall()]
+        cats = []
+        for row in conn.execute("SELECT c.nome, k.nome FROM categories c JOIN classifications k ON k.agregado_id=c.agregado_id AND k.id=c.classification_id WHERE c.agregado_id=?", (table_id,)).fetchall():
+            cats.append(f"{normalize_basic(row[1])}::{normalize_basic(row[0])}")
+        counts = {str(row["level_id"]).upper(): int(row["locality_count"] or 0) for row in conn.execute("SELECT level_id, locality_count FROM agregados_levels WHERE agregado_id=?", (table_id,)).fetchall()}
+        return {
+            "title": head["nome"] if head else "",
+            "title_norm": normalize_basic(head["nome"] if head else ""),
+            "survey_norm": normalize_basic(head["pesquisa"] if head else ""),
+            "subject_norm": normalize_basic(head["assunto"] if head else ""),
+            "vars": vars_,
+            "classes": classes,
+            "cats": cats,
+            "coverage_counts": counts,
+            "period_start": head["periodo_inicio"] if head else None,
+            "period_end": head["periodo_fim"] if head else None,
+            "n3": counts.get("N3", 0),
+            "n6": counts.get("N6", 0),
+        }
+    finally:
+        conn.close()
+
+
+def _eval(node: WhereNode, ctx: dict[str, Any], why: list[str]) -> bool:
+    if isinstance(node, _Not):
+        return not _eval(node.node, ctx, why)
+    if isinstance(node, _And):
+        return _eval(node.left, ctx, why) and _eval(node.right, ctx, why)
+    if isinstance(node, _Or):
+        return _eval(node.left, ctx, why) or _eval(node.right, ctx, why)
+    if isinstance(node, _Cmp):
+        result = _cmp(node.op, int(ctx["coverage_counts"].get(node.ident, 0)), node.number)
+        if result:
+            why.append(f"{node.ident}{node.op}{node.number}")
+        return result
+    if isinstance(node, _Contains):
+        needle = normalize_basic(node.text)
+        field = node.field.upper()
+        haystacks = {
+            "TITLE": [ctx["title_norm"]],
+            "SURVEY": [ctx["survey_norm"]],
+            "SUBJECT": [ctx["subject_norm"]],
+            "VAR": ctx["vars"],
+            "CLASS": ctx["classes"],
+            "CAT": ctx["cats"],
+        }.get(field, [])
+        result = any(needle in item for item in haystacks)
+        if result:
+            why.append(f"{field}~{node.text}")
+        return result
+    raise TypeError(node)
+
+
+def search_tables(args: SearchArgs) -> list[TableHit]:
+    conn = create_connection()
+    try:
+        rows = conn.execute("SELECT id FROM agregados ORDER BY id").fetchall()
+        table_ids = [int(row[0]) for row in rows]
+    finally:
+        conn.close()
+    node = parse_where_expr(args.q) if args.q else None
+    hits: list[TableHit] = []
+    for table_id in table_ids:
+        ctx = _load_context(table_id)
+        why: list[str] = []
+        if node is not None and not _eval(node, ctx, why):
+            continue
+        hits.append(TableHit(
+            table_id=table_id,
+            title=ctx["title"],
+            period_start=ctx["period_start"],
+            period_end=ctx["period_end"],
+            n3=ctx["n3"],
+            n6=ctx["n6"],
+            why=why,
+            score=float(len(why) + (1 if ctx["n6"] else 0)),
+        ))
+    hits.sort(key=lambda hit: (-hit.score, hit.table_id))
+    return hits[: args.limit]
+
+
+def show_table(table_id: int) -> dict[str, Any]:
+    conn = create_connection()
+    try:
+        head = conn.execute("SELECT id, nome, pesquisa, assunto, url, freq, periodo_inicio, periodo_fim, municipality_locality_count, covers_national_municipalities FROM agregados WHERE id=?", (table_id,)).fetchone()
+        if head is None:
+            raise RuntimeError(f"table {table_id} not found")
+        periods = [row[0] for row in conn.execute("SELECT periodo_id FROM periods WHERE agregado_id=? ORDER BY COALESCE(periodo_ord, 99999999), periodo_id", (table_id,)).fetchall()]
+        levels = [{"level_id": row[0], "locality_count": row[1]} for row in conn.execute("SELECT level_id, locality_count FROM agregados_levels WHERE agregado_id=? ORDER BY level_id", (table_id,)).fetchall()]
+        variables = [{"id": row[0], "name": row[1], "unit": row[2]} for row in conn.execute("SELECT id, nome, unidade FROM variables WHERE agregado_id=? ORDER BY id", (table_id,)).fetchall()]
+        classes = [{"id": row[0], "name": row[1]} for row in conn.execute("SELECT id, nome FROM classifications WHERE agregado_id=? ORDER BY id", (table_id,)).fetchall()]
+        return {
+            "id": int(head["id"]),
+            "title": head["nome"],
+            "survey": head["pesquisa"],
+            "subject": head["assunto"],
+            "url": head["url"] or f"https://sidra.ibge.gov.br/tabela/{int(head['id'])}",
+            "frequency": head["freq"],
+            "period_start": head["periodo_inicio"],
+            "period_end": head["periodo_fim"],
+            "municipality_locality_count": int(head["municipality_locality_count"] or 0),
+            "covers_national_municipalities": bool(head["covers_national_municipalities"]),
+            "periods": periods,
+            "levels": levels,
+            "variables": variables,
+            "classifications": classes,
+        }
+    finally:
+        conn.close()
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/catalog/where_expr.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterator
+
+
+@dataclass(frozen=True)
+class _Tok:
+    kind: str
+    value: str
+    pos: int
+
+
+def _tokens(text: str) -> Iterator[_Tok]:
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch in "()":
+            yield _Tok("LP" if ch == "(" else "RP", ch, i)
+            i += 1
+            continue
+        if ch == "~":
+            yield _Tok("TILDE", ch, i)
+            i += 1
+            continue
+        if i + 1 < n and text[i:i+2] in {">=", "<=", "==", "!="}:
+            yield _Tok("OP", text[i:i+2], i)
+            i += 2
+            continue
+        if ch in "<>=":
+            yield _Tok("OP", ch, i)
+            i += 1
+            continue
+        if ch == '"':
+            start = i
+            i += 1
+            buf: list[str] = []
+            while i < n and text[i] != '"':
+                if text[i] == "\\" and i + 1 < n:
+                    i += 1
+                buf.append(text[i])
+                i += 1
+            if i >= n:
+                raise SyntaxError(f"Unterminated string starting at {start}")
+            i += 1
+            yield _Tok("STR", "".join(buf), start)
+            continue
+        if ch.isalpha() or ch == "_":
+            start = i
+            i += 1
+            while i < n and (text[i].isalnum() or text[i] == "_"):
+                i += 1
+            word = text[start:i].upper()
+            if word in {"AND", "OR", "NOT"}:
+                yield _Tok(word, word, start)
+            else:
+                yield _Tok("ID", word, start)
+            continue
+        if ch.isdigit():
+            start = i
+            i += 1
+            while i < n and text[i].isdigit():
+                i += 1
+            yield _Tok("NUM", text[start:i], start)
+            continue
+        raise SyntaxError(f"Unexpected {ch!r} at {i}")
+    yield _Tok("EOF", "", n)
+
+
+@dataclass(frozen=True)
+class _Cmp:
+    op: str
+    ident: str
+    number: int
+
+
+@dataclass(frozen=True)
+class _Contains:
+    field: str
+    text: str
+
+
+@dataclass(frozen=True)
+class _Not:
+    node: Any
+
+
+@dataclass(frozen=True)
+class _And:
+    left: Any
+    right: Any
+
+
+@dataclass(frozen=True)
+class _Or:
+    left: Any
+    right: Any
+
+
+WhereNode = Any
+
+
+class _Parser:
+    def __init__(self, text: str) -> None:
+        self._it = iter(_tokens(text))
+        self.cur = next(self._it)
+
+    def _eat(self, kind: str) -> _Tok:
+        if self.cur.kind != kind:
+            raise SyntaxError(f"Expected {kind}, got {self.cur.kind} at {self.cur.pos}")
+        tok = self.cur
+        if kind != "EOF":
+            self.cur = next(self._it)
+        return tok
+
+    def parse(self) -> WhereNode:
+        node = self._expr()
+        self._eat("EOF")
+        return node
+
+    def _expr(self) -> WhereNode:
+        node = self._and()
+        while self.cur.kind == "OR":
+            self._eat("OR")
+            node = _Or(node, self._and())
+        return node
+
+    def _and(self) -> WhereNode:
+        node = self._unary()
+        while self.cur.kind == "AND":
+            self._eat("AND")
+            node = _And(node, self._unary())
+        return node
+
+    def _unary(self) -> WhereNode:
+        if self.cur.kind == "NOT":
+            self._eat("NOT")
+            return _Not(self._unary())
+        return self._primary()
+
+    def _primary(self) -> WhereNode:
+        if self.cur.kind == "LP":
+            self._eat("LP")
+            node = self._expr()
+            self._eat("RP")
+            return node
+        return self._atom()
+
+    def _atom(self) -> WhereNode:
+        ident = self._eat("ID").value
+        if self.cur.kind == "TILDE":
+            self._eat("TILDE")
+            text = self._eat("STR").value
+            return _Contains(field=ident, text=text)
+        if self.cur.kind != "OP":
+            return _Cmp(op=">=", ident=ident, number=1)
+        op = self._eat("OP").value
+        if op == "=":
+            op = "=="
+        number = int(self._eat("NUM").value)
+        return _Cmp(op=op, ident=ident, number=number)
+
+
+def parse_where_expr(text: str) -> WhereNode:
+    return _Parser(text).parse()
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/values/__init__.py
+###############################################################################
+from .normalize import SidraValueRow, normalize_value_payload
+from .canonical import sidra_row_to_canonical
+
+try:
+    from .loader import fetch_values_sharded, fetch_and_normalize_values_sharded
+except ModuleNotFoundError as exc:
+    _LOADER_IMPORT_ERROR = exc
+
+    def fetch_values_sharded(*args, **kwargs):
+        raise ModuleNotFoundError('SIDRA network loading requires optional runtime dependencies') from _LOADER_IMPORT_ERROR
+
+    def fetch_and_normalize_values_sharded(*args, **kwargs):
+        raise ModuleNotFoundError('SIDRA network loading requires optional runtime dependencies') from _LOADER_IMPORT_ERROR
+
+__all__ = [
+    'fetch_values_sharded',
+    'fetch_and_normalize_values_sharded',
+    'SidraValueRow',
+    'normalize_value_payload',
+    'sidra_row_to_canonical',
+]
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/values/canonical.py
+###############################################################################
+from __future__ import annotations
+
+from ...pegasus.canonical.schema import CanonicalRecord
+from .normalize import SidraValueRow
+
+
+def sidra_row_to_canonical(row: SidraValueRow) -> CanonicalRecord:
+    year = None
+    month = None
+    if row.period_id and row.period_id.isdigit():
+        if len(row.period_id) >= 4:
+            year = int(row.period_id[:4])
+        if len(row.period_id) >= 6:
+            month = int(row.period_id[4:6])
+    return CanonicalRecord(
+        support={
+            'municipality': row.locality_id if row.locality_id and len(row.locality_id) == 7 else None,
+            'year': year,
+            'month': month,
+            'date': None,
+        },
+        support_role='aggregate_context',
+        source={'system': 'SIDRA', 'dataset': str(row.aggregate_id), 'file': None},
+        event_type='aggregate_context',
+        code_roles={},
+        subgroups={},
+        continuous={'value': row.value},
+        annotations={'dimensions': row.dimensions},
+        weight=1.0,
+        quality={'included': row.value is not None, 'flags': []},
+        provenance={'aggregate_id': row.aggregate_id, 'variable_id': row.variable_id},
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/values/loader.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from ...config import get_settings
+from ..catalog.api import SidraApiClient
+from .normalize import SidraValueRow, normalize_value_payload
+
+
+@dataclass(frozen=True)
+class ValueRequestShard:
+    aggregate_id: int
+    variable_id: int | str
+    periods: str | None
+    localities: str
+    classification: str | None
+    view: str | None
+
+
+def _chunked(values: list[str], size: int) -> list[list[str]]:
+    if not values:
+        return [[]]
+    return [values[idx: idx + size] for idx in range(0, len(values), size)]
+
+
+def _format_localities(level: str, locality_ids: list[str]) -> str:
+    return f"{level}[{','.join(locality_ids)}]" if locality_ids else level
+
+
+async def fetch_values_sharded(
+    *,
+    aggregate_id: int,
+    variable_id: int | str,
+    periods: list[str],
+    level: str,
+    locality_ids: list[str],
+    classification: str | None = None,
+    view: str | None = 'flat',
+    use_cache: bool = True,
+) -> list[Any]:
+    settings = get_settings()
+    locality_chunks = _chunked(locality_ids, settings.sidra_value_locality_chunk_size)
+    period_chunks = _chunked(periods, settings.sidra_value_period_chunk_size)
+    shards = [
+        ValueRequestShard(
+            aggregate_id=aggregate_id,
+            variable_id=variable_id,
+            periods='|'.join(period_chunk) if period_chunk and period_chunk[0] else None,
+            localities=_format_localities(level, locality_chunk),
+            classification=classification,
+            view=view,
+        )
+        for locality_chunk in locality_chunks
+        for period_chunk in period_chunks
+    ]
+    results: list[Any] = []
+    async with SidraApiClient() as client:
+        for shard in shards:
+            payload = await client.fetch_values(
+                aggregate_id=shard.aggregate_id,
+                variable_id=shard.variable_id,
+                periods=shard.periods,
+                localities=shard.localities,
+                classification=shard.classification,
+                view=shard.view,
+                use_cache=use_cache,
+            )
+            results.append(payload)
+    return results
+
+
+async def fetch_and_normalize_values_sharded(
+    *,
+    aggregate_id: int,
+    variable_id: int | str,
+    periods: list[str],
+    level: str,
+    locality_ids: list[str],
+    classification: str | None = None,
+    view: str | None = 'flat',
+    use_cache: bool = True,
+) -> list[SidraValueRow]:
+    payloads = await fetch_values_sharded(
+        aggregate_id=aggregate_id,
+        variable_id=variable_id,
+        periods=periods,
+        level=level,
+        locality_ids=locality_ids,
+        classification=classification,
+        view=view,
+        use_cache=use_cache,
+    )
+    out: list[SidraValueRow] = []
+    for payload in payloads:
+        out.extend(normalize_value_payload(aggregate_id=aggregate_id, variable_id=variable_id, payload=payload))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/sidra/values/normalize.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable
+
+
+KNOWN_META_KEYS = {
+    'NC', 'NN', 'MC', 'MN', 'V', 'D1C', 'D1N', 'D2C', 'D2N', 'D3C', 'D3N', 'D4C', 'D4N', 'D5C', 'D5N'
+}
+
+
+@dataclass(frozen=True)
+class SidraValueRow:
+    aggregate_id: int
+    variable_id: str
+    variable_name: str | None
+    locality_id: str | None
+    locality_name: str | None
+    period_id: str | None
+    period_name: str | None
+    value: float | None
+    raw_value: str | None
+    dimensions: dict[str, dict[str, str | None]]
+    raw_row: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, '', '...'):
+        return None
+    try:
+        return float(str(value).replace(',', '.'))
+    except ValueError:
+        return None
+
+
+def normalize_value_payload(*, aggregate_id: int, variable_id: int | str, payload: Any) -> list[SidraValueRow]:
+    rows: list[SidraValueRow] = []
+    if not isinstance(payload, list):
+        return rows
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        locality_id = item.get('NC') or item.get('MC')
+        locality_name = item.get('NN') or item.get('MN')
+        period_id = item.get('D3C') or item.get('D2C') or item.get('P')
+        period_name = item.get('D3N') or item.get('D2N') or item.get('PN')
+        variable_name = item.get('D1N') if item.get('D1C') == str(variable_id) else item.get('D1N')
+        dims: dict[str, dict[str, str | None]] = {}
+        for idx in range(1, 10):
+            code_key = f'D{idx}C'
+            name_key = f'D{idx}N'
+            if item.get(code_key) is None and item.get(name_key) is None:
+                continue
+            dims[f'D{idx}'] = {'code': item.get(code_key), 'name': item.get(name_key)}
+        rows.append(SidraValueRow(
+            aggregate_id=aggregate_id,
+            variable_id=str(variable_id),
+            variable_name=variable_name,
+            locality_id=str(locality_id) if locality_id not in (None, '') else None,
+            locality_name=str(locality_name) if locality_name not in (None, '') else None,
+            period_id=str(period_id) if period_id not in (None, '') else None,
+            period_name=str(period_name) if period_name not in (None, '') else None,
+            value=_coerce_float(item.get('V')),
+            raw_value=str(item.get('V')) if item.get('V') is not None else None,
+            dimensions=dims,
+            raw_row=item,
+        ))
+    return rows
+
+
+
