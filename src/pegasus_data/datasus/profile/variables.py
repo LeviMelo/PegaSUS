@@ -24,7 +24,7 @@ def _family_index(families: list[dict[str, Any]]) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for family in families:
         family_id = str(family.get('family_id') or '')
-        for path in family.get('files', []) or []:
+        for path in family.get('member_files', family.get('files', [])) or []:
             out.setdefault(str(path), set()).add(family_id)
     return out
 
@@ -39,7 +39,7 @@ def build_variable_catalog(
     bucket: dict[str, dict[str, Any]] = {}
 
     for row in profile_rows:
-        path = str(row.get('path') or '')
+        path = str(row.get('source_path') or row.get('path') or '')
         families_for_path = path_to_families.get(path) or set()
         for field in row.get('field_profiles') or []:
             variable = str(field.get('name') or '').upper()

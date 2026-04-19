@@ -7,13 +7,19 @@ from pathlib import Path
 
 from .common.io import read_jsonl, write_json, write_jsonl
 from .common.logging import configure_logging
-from .datasus.decode.inspect import inspect_dbase_file
+from .datasus.decode.inspect import inspect_file
 from .datasus.discovery.catalog import build_series_catalog, write_series_catalog
 from .datasus.discovery.docs import build_family_document_registry
 from .datasus.discovery.manifest import parse_manifest_text, read_manifest_jsonl, write_manifest_jsonl
+from .datasus.fetch import download_plans, plan_family_candidate_downloads, select_family_candidates
 from .datasus.ftp import DatasusFtpScanner, diff_scan_outputs
 from .datasus.inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
-from .datasus.profile import build_variable_catalog, profile_dbase_file
+from .datasus.profile import (
+    build_family_similarity_report,
+    build_variable_catalog,
+    build_variable_similarity_report,
+    profile_file,
+)
 from .datasus.translate import (
     build_translation_bundle,
     emit_translation_grammar,
@@ -25,9 +31,6 @@ from .sidra.catalog.schema import ensure_schema
 from .sidra.catalog.search import SearchArgs, search_tables, show_table
 from .sidra.values import fetch_and_normalize_values_sharded
 
-_DBASE_EXTS = {'.dbf', '.dbc'}
-
-
 def _load_manifest_like(path: str, *, scan_id: str | None = None):
     return read_manifest_jsonl(path) if path.lower().endswith('.jsonl') else parse_manifest_text(path, scan_id=scan_id)
 
@@ -36,15 +39,45 @@ def _load_json(path: str):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+def _load_rows_input(path: str) -> list[dict]:
+    if path.lower().endswith('.jsonl'):
+        return list(read_jsonl(path))
+    payload = _load_json(path)
+    if isinstance(payload, list):
+        return payload
+    for key in ('rows', 'downloads', 'items', 'selected_data_files'):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    raise SystemExit(f'unsupported row payload: {path}')
+
+
+def _load_family_row(path: str, family_id: str) -> dict:
+    families = _load_json(path)
+    family = next((row for row in families if str(row.get('family_id')) == family_id), None)
+    if family is None:
+        raise SystemExit(f'family not found: {family_id}')
+    return family
+
+
 def _profile_signature_map(profile_jsonl: str | None) -> tuple[dict[str, str], list[dict]]:
     schema_signatures: dict[str, str] = {}
     profile_rows: list[dict] = []
     if profile_jsonl:
         for row in read_jsonl(profile_jsonl):
             profile_rows.append(row)
-            if 'path' in row and 'schema_signature' in row:
-                schema_signatures[str(row['path'])] = str(row['schema_signature'])
+            source_path = str(row.get('source_path') or row.get('path') or '')
+            if source_path and 'schema_signature' in row:
+                schema_signatures[source_path] = str(row['schema_signature'])
     return schema_signatures, profile_rows
+
+
+def _profile_input_path(row: dict) -> str | None:
+    for key in ('local_path', 'path', 'full_path', 'target_path'):
+        value = row.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 def _cmd_datasus_manifest(args: argparse.Namespace) -> None:
@@ -97,6 +130,29 @@ def _cmd_datasus_family_registry(args: argparse.Namespace) -> None:
     print(f'wrote {len(registry)} family registry rows -> {args.output}')
 
 
+def _cmd_datasus_family_candidates(args: argparse.Namespace) -> None:
+    family = _load_family_row(args.family_registry, args.family_id)
+    selection = select_family_candidates(family, max_data_files=args.max_data_files, max_docs=args.max_docs)
+    write_json(args.output, selection.to_dict())
+    print(f'wrote candidate selection -> {args.output}')
+
+
+def _cmd_datasus_download_candidates(args: argparse.Namespace) -> None:
+    selection = _load_json(args.input)
+    plans = plan_family_candidate_downloads(selection, asset_kind='data', root=args.root)
+    results = download_plans(plans, overwrite=args.overwrite, dry_run=args.dry_run)
+    write_json(args.output, results)
+    print(f'wrote {len(results)} candidate download rows -> {args.output}')
+
+
+def _cmd_datasus_download_docs(args: argparse.Namespace) -> None:
+    selection = _load_json(args.input)
+    plans = plan_family_candidate_downloads(selection, asset_kind='doc', root=args.root)
+    results = download_plans(plans, overwrite=args.overwrite, dry_run=args.dry_run)
+    write_json(args.output, results)
+    print(f'wrote {len(results)} document download rows -> {args.output}')
+
+
 def _cmd_datasus_doc_registry(args: argparse.Namespace) -> None:
     families = _load_json(args.families)
     registry = build_family_document_registry(families, doc_root=args.doc_root, max_chars=args.max_chars)
@@ -105,12 +161,12 @@ def _cmd_datasus_doc_registry(args: argparse.Namespace) -> None:
 
 
 def _cmd_datasus_inspect(args: argparse.Namespace) -> None:
-    preview = inspect_dbase_file(args.path, sample_rows=args.rows)
+    preview = inspect_file(args.path, sample_rows=args.rows)
     print(json.dumps(preview.to_dict(), ensure_ascii=False, indent=2, default=str))
 
 
 def _cmd_datasus_profile(args: argparse.Namespace) -> None:
-    profile = profile_dbase_file(args.path, sample_rows=args.sample_rows)
+    profile = profile_file(args.path, sample_rows=args.sample_rows)
     if args.output:
         write_json(args.output, profile.to_dict())
         print(f'wrote profile -> {args.output}')
@@ -119,19 +175,36 @@ def _cmd_datasus_profile(args: argparse.Namespace) -> None:
 
 
 def _cmd_datasus_profile_many(args: argparse.Namespace) -> None:
-    rows = list(read_jsonl(args.input))
+    rows = _load_rows_input(args.input)
     out_rows = []
     count = 0
     for row in rows:
-        path = row.get('path') or row.get('full_path')
-        if not path or Path(path).suffix.lower() not in _DBASE_EXTS:
+        path = _profile_input_path(row)
+        if not path:
             continue
         try:
-            profile = profile_dbase_file(path, sample_rows=args.sample_rows)
+            profile = profile_file(
+                path,
+                sample_rows=args.sample_rows,
+                source_path=str(row.get('source_path') or row.get('path') or path),
+                local_path=str(row.get('local_path') or path),
+            )
         except Exception as exc:
-            out_rows.append({'path': path, 'error': str(exc)})
+            out_rows.append({
+                'path': path,
+                'source_path': row.get('source_path') or row.get('path') or path,
+                'local_path': row.get('local_path') or path,
+                'error': str(exc),
+            })
             continue
-        out_rows.append(profile.to_dict())
+        payload = profile.to_dict()
+        if row.get('source_path'):
+            payload['source_path'] = row['source_path']
+        if row.get('family_id'):
+            payload['family_id'] = row['family_id']
+        if row.get('local_path'):
+            payload['local_path'] = row['local_path']
+        out_rows.append(payload)
         count += 1
         if args.limit and count >= args.limit:
             break
@@ -145,6 +218,28 @@ def _cmd_datasus_variable_catalog(args: argparse.Namespace) -> None:
     catalog = build_variable_catalog(profiles, families=families)
     write_json(args.output, [row.to_dict() for row in catalog])
     print(f'wrote {len(catalog)} variable catalog rows -> {args.output}')
+
+
+def _cmd_datasus_similarity_report(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families)
+    payload = build_variable_similarity_report(
+        profiles,
+        families,
+        family_similarity_threshold=args.family_threshold,
+        name_similarity_threshold=args.name_threshold,
+        value_similarity_threshold=args.value_threshold,
+    )
+    write_json(args.output, payload)
+    print(f'wrote similarity report -> {args.output}')
+
+
+def _cmd_datasus_family_similarity(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families)
+    payload = build_family_similarity_report(profiles, families, similarity_threshold=args.threshold)
+    write_json(args.output, payload)
+    print(f'wrote family similarity report -> {args.output}')
 
 
 def _cmd_datasus_translate_validate(args: argparse.Namespace) -> None:
@@ -340,6 +435,30 @@ def build_parser() -> argparse.ArgumentParser:
     family_registry.add_argument('--profile-jsonl', default=None)
     family_registry.set_defaults(func=_cmd_datasus_family_registry)
 
+    family_candidates = datasus_sub.add_parser('family-candidates')
+    family_candidates.add_argument('family_id')
+    family_candidates.add_argument('family_registry')
+    family_candidates.add_argument('output')
+    family_candidates.add_argument('--max-data-files', type=int, default=3)
+    family_candidates.add_argument('--max-docs', type=int, default=5)
+    family_candidates.set_defaults(func=_cmd_datasus_family_candidates)
+
+    download_candidates = datasus_sub.add_parser('download-candidates')
+    download_candidates.add_argument('input')
+    download_candidates.add_argument('output')
+    download_candidates.add_argument('--root', default=None)
+    download_candidates.add_argument('--overwrite', action='store_true')
+    download_candidates.add_argument('--dry-run', action='store_true')
+    download_candidates.set_defaults(func=_cmd_datasus_download_candidates)
+
+    download_docs = datasus_sub.add_parser('download-docs')
+    download_docs.add_argument('input')
+    download_docs.add_argument('output')
+    download_docs.add_argument('--root', default=None)
+    download_docs.add_argument('--overwrite', action='store_true')
+    download_docs.add_argument('--dry-run', action='store_true')
+    download_docs.set_defaults(func=_cmd_datasus_download_docs)
+
     doc_registry = datasus_sub.add_parser('doc-registry')
     doc_registry.add_argument('families')
     doc_registry.add_argument('output')
@@ -365,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile.set_defaults(func=_cmd_datasus_profile)
 
     profile_many = datasus_sub.add_parser('profile-many')
-    profile_many.add_argument('input', help='Inventory JSONL or scan JSONL')
+    profile_many.add_argument('input', help='Inventory JSONL, download JSON, or scan JSONL')
     profile_many.add_argument('output')
     profile_many.add_argument('--sample-rows', type=int, default=500)
     profile_many.add_argument('--limit', type=int, default=None)
@@ -376,6 +495,22 @@ def build_parser() -> argparse.ArgumentParser:
     variable_catalog.add_argument('output')
     variable_catalog.add_argument('--families', default=None)
     variable_catalog.set_defaults(func=_cmd_datasus_variable_catalog)
+
+    family_similarity = datasus_sub.add_parser('family-similarity')
+    family_similarity.add_argument('profile_jsonl')
+    family_similarity.add_argument('families')
+    family_similarity.add_argument('output')
+    family_similarity.add_argument('--threshold', type=float, default=0.8)
+    family_similarity.set_defaults(func=_cmd_datasus_family_similarity)
+
+    similarity_report = datasus_sub.add_parser('similarity-report')
+    similarity_report.add_argument('profile_jsonl')
+    similarity_report.add_argument('families')
+    similarity_report.add_argument('output')
+    similarity_report.add_argument('--family-threshold', type=float, default=0.8)
+    similarity_report.add_argument('--name-threshold', type=float, default=0.85)
+    similarity_report.add_argument('--value-threshold', type=float, default=0.6)
+    similarity_report.set_defaults(func=_cmd_datasus_similarity_report)
 
     tval = datasus_sub.add_parser('translate-validate')
     tval.add_argument('input')

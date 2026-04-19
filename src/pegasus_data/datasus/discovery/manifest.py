@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 from ...common.io import read_jsonl, read_text_lines, write_jsonl
-from .heuristics import DATA_EXTENSIONS, PATTERNS, classify_path_type, is_excluded_path
+from .heuristics import classify_path_type, infer_pattern_components, is_excluded_path, is_probably_structured_data
 
 
 @dataclass(frozen=True)
@@ -15,6 +14,8 @@ class ManifestEntry:
     directory: str
     filename: str
     extension: str
+    primary_extension: str | None
+    format_family: str
     path_components: list[str]
     source: str
     scan_id: str | None
@@ -45,31 +46,28 @@ def parse_manifest_line(raw: str, *, scan_id: str | None = None, source: str = "
     url, path = _parse_url_or_path(raw)
     if is_excluded_path(path):
         return None
-    pure = PurePosixPath(path)
-    directory = str(pure.parent)
-    filename = pure.name
-    extension = pure.suffix.lower()
-    stem = pure.stem
+    parsed = infer_pattern_components(path)
+    directory = path.rsplit('/', 1)[0] if '/' in path else ''
+    filename = str(parsed['filename'])
+    extension = str(parsed['extension'])
     path_type = classify_path_type(path)
     pattern_name = None
     series_prefix = None
     geo_code = None
     date_code = None
-    if extension in DATA_EXTENSIONS and path_type == "Primary":
-        for candidate_name, pattern in PATTERNS.items():
-            match = pattern.match(stem)
-            if match:
-                pattern_name = candidate_name
-                series_prefix = match.group(1).upper()
-                geo_code = match.group(2).upper()
-                date_code = match.group(3)
-                break
+    if path_type == "Primary" and is_probably_structured_data(path):
+        pattern_name = parsed['pattern_name']
+        series_prefix = parsed['series_prefix']
+        geo_code = parsed['geo_code']
+        date_code = parsed['date_code']
     return ManifestEntry(
         path=path,
         url=url,
         directory=directory,
         filename=filename,
         extension=extension,
+        primary_extension=parsed['primary_extension'],
+        format_family=str(parsed['format_family']),
         path_components=[part for part in directory.split("/") if part],
         source=source,
         scan_id=scan_id,
@@ -92,7 +90,12 @@ def parse_manifest_text(path: str, *, scan_id: str | None = None) -> list[Manife
 
 
 def read_manifest_jsonl(path: str) -> list[ManifestEntry]:
-    return [ManifestEntry(**row) for row in read_jsonl(path)]
+    out: list[ManifestEntry] = []
+    for row in read_jsonl(path):
+        row.setdefault('primary_extension', None)
+        row.setdefault('format_family', 'unknown')
+        out.append(ManifestEntry(**row))
+    return out
 
 
 def write_manifest_jsonl(path: str, entries: list[ManifestEntry]) -> None:

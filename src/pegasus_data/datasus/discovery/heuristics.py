@@ -3,8 +3,11 @@ from __future__ import annotations
 import datetime as dt
 import re
 from pathlib import PurePosixPath
+from typing import Any
 
-DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".zip", ".gz"}
+STRUCTURED_DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".json"}
+WRAPPER_EXTENSIONS = {".zip", ".gz"}
+DATA_EXTENSIONS = STRUCTURED_DATA_EXTENSIONS | WRAPPER_EXTENSIONS
 PDF_KEYWORDS = {"manual", "dicionario", "leia-me", "layout", "estrutura", "dic_dados", "instrucoes"}
 AUXILIARY_PATH_KEYWORDS = {"TABELAS", "DOCS", "DOCUMENTOS", "TABWIN", "DOC"}
 EXCLUSION_PATH_KEYWORDS = {"/IBGE/"}
@@ -39,7 +42,97 @@ def classify_path_type(path: str) -> str:
 
 def split_path(path: str) -> tuple[str, str, str]:
     p = PurePosixPath(path)
-    return str(p.parent), p.name, p.suffix.lower()
+    return str(p.parent), p.name, infer_extension_chain(path)
+
+
+def suffix_chain(path: str) -> list[str]:
+    return [suffix.lower() for suffix in PurePosixPath(path).suffixes]
+
+
+def infer_extension_chain(path: str) -> str:
+    suffixes = suffix_chain(path)
+    return ''.join(suffixes) if suffixes else ''
+
+
+def strip_all_suffixes(name: str) -> str:
+    pure = PurePosixPath(name)
+    base = pure.name
+    for suffix in reversed(pure.suffixes):
+        if base.lower().endswith(suffix.lower()):
+            base = base[: -len(suffix)]
+    return base
+
+
+def infer_primary_extension(path: str) -> str | None:
+    suffixes = suffix_chain(path)
+    for suffix in reversed(suffixes):
+        if suffix in STRUCTURED_DATA_EXTENSIONS:
+            return suffix
+    upper_path = path.upper()
+    if '/JSON/' in upper_path:
+        return '.json'
+    if '/XML/' in upper_path:
+        return '.xml'
+    if '/CSV/' in upper_path:
+        return '.csv'
+    if suffixes:
+        return suffixes[-1]
+    return None
+
+
+def infer_format_family(path: str) -> str:
+    primary = infer_primary_extension(path)
+    if primary in {'.dbf', '.dbc'}:
+        return 'dbase'
+    if primary == '.json':
+        return 'json'
+    if primary == '.xml':
+        return 'xml'
+    if primary == '.csv':
+        return 'csv'
+    if any(suffix in WRAPPER_EXTENSIONS for suffix in suffix_chain(path)):
+        return 'archive'
+    return 'unknown'
+
+
+def is_probably_structured_data(path: str) -> bool:
+    primary = infer_primary_extension(path)
+    return primary in STRUCTURED_DATA_EXTENSIONS or infer_format_family(path) == 'archive'
+
+
+def infer_inner_candidate_name(path: str) -> str:
+    return strip_all_suffixes(PurePosixPath(path).name)
+
+
+def infer_pattern_components(path: str) -> dict[str, Any]:
+    filename = PurePosixPath(path).name
+    stem = infer_inner_candidate_name(filename)
+    extension = infer_extension_chain(path)
+    primary_extension = infer_primary_extension(path)
+    format_family = infer_format_family(path)
+    pattern_name = None
+    series_prefix = None
+    geo_code = None
+    date_code = None
+    for candidate_name, pattern in PATTERNS.items():
+        match = pattern.match(stem)
+        if match:
+            pattern_name = candidate_name
+            series_prefix = match.group(1).upper()
+            geo_code = match.group(2).upper()
+            date_code = match.group(3)
+            break
+    return {
+        'filename': filename,
+        'stem': stem,
+        'extension': extension,
+        'primary_extension': primary_extension,
+        'format_family': format_family,
+        'pattern_name': pattern_name,
+        'series_prefix': series_prefix,
+        'geo_code': geo_code,
+        'date_code': date_code,
+    }
 
 
 def infer_system_guess(directory: str) -> str | None:

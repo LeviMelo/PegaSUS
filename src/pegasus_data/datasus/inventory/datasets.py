@@ -11,6 +11,7 @@ from ..discovery.heuristics import (
     classify_path_semantic,
     format_normalized_date,
     infer_date_format,
+    infer_inner_candidate_name,
     normalize_datecode,
 )
 from .files import InventoryFile
@@ -23,8 +24,10 @@ class DatasetFamily:
     series_prefix: str | None
     partition_type: str
     date_format: str | None
+    time_range: str | None
     time_range_display: str | None
     file_count: int
+    member_files: list[str]
     files: list[str]
     source_paths: list[str]
     geo_coverage: list[str]
@@ -42,7 +45,7 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
     for item in files:
         if item.path_type != 'Primary':
             continue
-        key = (item.system_guess, item.series_prefix or Path(item.filename).stem)
+        key = (item.system_guess, item.series_prefix or infer_inner_candidate_name(item.filename))
         by_key[key].append(item)
 
     out: list[DatasetFamily] = []
@@ -69,7 +72,7 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
             type('ManifestLike', (), {'path': f.path, 'url': f'ftp://ftp.datasus.gov.br{f.path}', 'directory': f.directory, 'filename': f.filename, 'extension': f.extension, 'path_components': [p for p in f.directory.split('/') if p], 'source': 'datasus_ftp', 'scan_id': None, 'path_type': f.path_type, 'pattern_name': f.pattern_name, 'series_prefix': f.series_prefix, 'geo_code': f.geo_code, 'date_code': f.date_code, 'raw_listing_facts': None})
             for f in files
         ])]
-        family_id = f"{system_guess or 'UNKNOWN'}:{prefix or Path(rows[0].filename).stem}"
+        family_id = f"{system_guess or 'UNKNOWN'}:{prefix or infer_inner_candidate_name(rows[0].filename)}"
         if signatures:
             family_id += f":s{len(signatures)}"
         out.append(DatasetFamily(
@@ -78,8 +81,10 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
             series_prefix=prefix,
             partition_type=partition,
             date_format=date_format,
+            time_range=time_range_display,
             time_range_display=time_range_display,
             file_count=len(rows),
+            member_files=files_for_family,
             files=files_for_family,
             source_paths=sorted({row.directory for row in rows}),
             geo_coverage=geo_coverage,

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
+import json
 from pathlib import Path
+import tempfile
 from typing import Any
 from urllib.parse import urlparse
+
+from ...common.hashing import sha256_file
+from ...common.storage import ensure_directory
+from ...config import get_settings
 
 try:
     from rapidfuzz import fuzz
@@ -145,6 +151,34 @@ def extract_document_excerpt(path: str | Path, *, max_chars: int = 4000) -> tupl
     return None, 'unsupported_format', suffix.lstrip('.') or None
 
 
+def _doc_cache_path(path: str | Path, *, max_chars: int) -> Path:
+    target = Path(path)
+    file_hash = sha256_file(target)
+    preferred_root = get_settings().data_root / 'cache' / 'datasus_doc_excerpts'
+    try:
+        cache_root = ensure_directory(preferred_root)
+    except OSError:
+        cache_root = ensure_directory(Path(tempfile.gettempdir()) / 'pegasus_data' / 'datasus_doc_excerpts')
+    return cache_root / f'{file_hash}_{max_chars}.json'
+
+
+def extract_document_excerpt_cached(path: str | Path, *, max_chars: int = 4000) -> tuple[str | None, str, str | None]:
+    cache_path = _doc_cache_path(path, max_chars=max_chars)
+    if cache_path.exists():
+        payload = json.loads(cache_path.read_text(encoding='utf-8'))
+        return payload.get('excerpt'), str(payload.get('status') or 'unknown'), payload.get('content_type')
+    excerpt, status, content_type = extract_document_excerpt(path, max_chars=max_chars)
+    cache_path.write_text(
+        json.dumps({
+            'excerpt': excerpt,
+            'status': status,
+            'content_type': content_type,
+        }, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    return excerpt, status, content_type
+
+
 def build_family_document_registry(
     families: list[dict[str, Any]],
     *,
@@ -164,7 +198,7 @@ def build_family_document_registry(
             for candidate in _candidate_local_paths(url, filename, doc_root):
                 if candidate.exists():
                     local_path = str(candidate)
-                    excerpt, status, content_type = extract_document_excerpt(candidate, max_chars=max_chars)
+                    excerpt, status, content_type = extract_document_excerpt_cached(candidate, max_chars=max_chars)
                     break
             out.append(FamilyDocumentEntry(
                 family_id=family_id,

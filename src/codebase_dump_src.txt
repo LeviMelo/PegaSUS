@@ -23,6 +23,7 @@ Project structure for '/c/Users/Galaxy/LEVI/projects/PegaSUS/src':
   pegasus_data/datasus/fetch/__init__.py
   pegasus_data/datasus/fetch/downloader.py
   pegasus_data/datasus/fetch/planner.py
+  pegasus_data/datasus/fetch/selectors.py
   pegasus_data/datasus/ftp/__init__.py
   pegasus_data/datasus/ftp/diff.py
   pegasus_data/datasus/ftp/scanner.py
@@ -32,12 +33,9 @@ Project structure for '/c/Users/Galaxy/LEVI/projects/PegaSUS/src':
   pegasus_data/datasus/inventory/files.py
   pegasus_data/datasus/inventory/registry.py
   pegasus_data/datasus/models.py
-  pegasus_data/datasus/parsers/__init__.py
-  pegasus_data/datasus/parsers/base.py
-  pegasus_data/datasus/parsers/dbase.py
-  pegasus_data/datasus/parsers/generic.py
   pegasus_data/datasus/profile/__init__.py
   pegasus_data/datasus/profile/fields.py
+  pegasus_data/datasus/profile/similarity.py
   pegasus_data/datasus/profile/tables.py
   pegasus_data/datasus/profile/variables.py
   pegasus_data/datasus/translate/__init__.py
@@ -78,243 +76,499 @@ Project structure for '/c/Users/Galaxy/LEVI/projects/PegaSUS/src':
 
 
 ###############################################################################
-### FILE: pegasus_data/datasus/inventory/registry.py
+### FILE: pegasus_data/datasus/fetch/selectors.py
 ###############################################################################
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import PurePosixPath
 from typing import Any
+
+from ..discovery.heuristics import format_normalized_date, infer_format_family, infer_pattern_components, infer_primary_extension, is_probably_structured_data, normalize_datecode
 
 
 @dataclass(frozen=True)
-class FamilyRegistryEntry:
+class FamilyCandidateFile:
+    source_path: str
+    source_url: str
+    filename: str
+    directory: str
+    extension: str
+    primary_extension: str | None
+    format_family: str
+    geo_code: str | None
+    date_code: str | None
+    normalized_date: int | None
+    time_display: str | None
+    path_semantic: str | None
+    selection_rank: int
+    selection_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FamilyCandidateDoc:
+    url: str
+    filename: str
+    score: float | None
+    selection_rank: int
+    selection_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FamilyCandidateSelection:
     family_id: str
-    system_guess: str | None
     series_prefix: str | None
     partition_type: str
     date_format: str | None
     time_range_display: str | None
-    file_count: int
-    source_paths: list[str]
-    schema_signatures: list[str]
-    variable_count: int
-    variables: list[str]
-    associated_docs: list[dict[str, Any]]
+    member_file_count: int
+    selected_data_files: list[FamilyCandidateFile]
+    selected_docs: list[FamilyCandidateDoc]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'family_id': self.family_id,
+            'series_prefix': self.series_prefix,
+            'partition_type': self.partition_type,
+            'date_format': self.date_format,
+            'time_range_display': self.time_range_display,
+            'member_file_count': self.member_file_count,
+            'selected_data_files': [row.to_dict() for row in self.selected_data_files],
+            'selected_docs': [row.to_dict() for row in self.selected_docs],
+        }
+
+
+def _parse_member_file(path: str, *, date_format: str | None, path_semantics: dict[str, str]) -> dict[str, Any]:
+    pure = PurePosixPath(path)
+    parsed = infer_pattern_components(path)
+    filename = str(parsed['filename'])
+    geo_code = parsed['geo_code']
+    date_code = parsed['date_code']
+    normalized_date = None
+    time_display = None
+    if date_code and date_format:
+        try:
+            normalized_date = normalize_datecode(date_code, date_format)
+            time_display = format_normalized_date(normalized_date)
+        except Exception:
+            normalized_date = None
+    return {
+        'source_path': path,
+        'source_url': f'ftp://ftp.datasus.gov.br{path}',
+        'filename': filename,
+        'directory': str(pure.parent),
+        'extension': parsed['extension'],
+        'primary_extension': parsed['primary_extension'],
+        'format_family': parsed['format_family'],
+        'geo_code': geo_code,
+        'date_code': date_code,
+        'normalized_date': normalized_date,
+        'time_display': time_display,
+        'path_semantic': path_semantics.get(str(pure.parent)),
+    }
+
+
+def _primary_rank(path_semantic: str | None) -> int:
+    if path_semantic == '[Primary]':
+        return 2
+    if path_semantic == '[Legacy Archive]':
+        return 1
+    return 0
+
+
+def _sort_candidates(parsed_files: list[dict[str, Any]], *, prefer_br: bool) -> list[dict[str, Any]]:
+    return sorted(
+        parsed_files,
+        key=lambda row: (
+            row.get('normalized_date') or -1,
+            _primary_rank(row.get('path_semantic')),
+            1 if prefer_br and row.get('geo_code') == 'BR' else 0,
+            row.get('filename') or '',
+        ),
+        reverse=True,
+    )
+
+
+def _reason_for_selection(
+    candidate: dict[str, Any],
+    *,
+    partition_type: str,
+    seen_geos: set[str],
+    seen_dates: set[int],
+    first_pick: bool,
+) -> str:
+    reasons: list[str] = []
+    geo_code = str(candidate.get('geo_code') or '')
+    normalized_date = candidate.get('normalized_date')
+    if first_pick:
+        if partition_type == 'Mixed-Partition' and geo_code == 'BR':
+            reasons.append('latest nation-wide member in mixed family')
+        elif partition_type == 'Nation-Wide':
+            reasons.append('latest nation-wide family member')
+        else:
+            reasons.append('most recent family member')
+    else:
+        if geo_code and geo_code not in seen_geos:
+            reasons.append(f'adds geo coverage ({geo_code})')
+        if normalized_date is not None and normalized_date not in seen_dates:
+            reasons.append('adds time coverage')
+    if candidate.get('path_semantic') == '[Primary]':
+        reasons.append('preferred primary path')
+    primary_extension = candidate.get('primary_extension')
+    if primary_extension:
+        reasons.append(f'format={str(primary_extension).lstrip(".")}')
+    if not reasons:
+        reasons.append('best remaining recent candidate')
+    return '; '.join(reasons)
+
+
+def _select_diverse_files(parsed_files: list[dict[str, Any]], *, partition_type: str, max_data_files: int) -> list[FamilyCandidateFile]:
+    if not parsed_files:
+        return []
+    selected: list[FamilyCandidateFile] = []
+    seen_geos: set[str] = set()
+    seen_dates: set[int] = set()
+    remaining = list(parsed_files)
+
+    if partition_type == 'Mixed-Partition':
+        br_candidates = [row for row in remaining if row.get('geo_code') == 'BR']
+        if br_candidates:
+            first = _sort_candidates(br_candidates, prefer_br=True)[0]
+            reason = _reason_for_selection(first, partition_type=partition_type, seen_geos=seen_geos, seen_dates=seen_dates, first_pick=True)
+            selected.append(FamilyCandidateFile(selection_rank=1, selection_reason=reason, **first))
+            seen_geos.add(str(first.get('geo_code') or ''))
+            if first.get('normalized_date') is not None:
+                seen_dates.add(int(first['normalized_date']))
+            remaining = [row for row in remaining if row['source_path'] != first['source_path']]
+
+    while remaining and len(selected) < max_data_files:
+        if not selected:
+            chosen = _sort_candidates(remaining, prefer_br=(partition_type != 'State-Partitioned'))[0]
+        else:
+            chosen = max(
+                remaining,
+                key=lambda row: (
+                    1 if str(row.get('geo_code') or '') not in seen_geos else 0,
+                    1 if row.get('normalized_date') not in seen_dates else 0,
+                    _primary_rank(row.get('path_semantic')),
+                    row.get('normalized_date') or -1,
+                    row.get('filename') or '',
+                ),
+            )
+        reason = _reason_for_selection(
+            chosen,
+            partition_type=partition_type,
+            seen_geos=seen_geos,
+            seen_dates=seen_dates,
+            first_pick=not selected,
+        )
+        selected.append(FamilyCandidateFile(selection_rank=len(selected) + 1, selection_reason=reason, **chosen))
+        seen_geos.add(str(chosen.get('geo_code') or ''))
+        if chosen.get('normalized_date') is not None:
+            seen_dates.add(int(chosen['normalized_date']))
+        remaining = [row for row in remaining if row['source_path'] != chosen['source_path']]
+
+    return selected
+
+
+def select_family_candidates(
+    family: dict[str, Any],
+    *,
+    max_data_files: int = 3,
+    max_docs: int = 5,
+) -> FamilyCandidateSelection:
+    member_files = [str(path) for path in family.get('member_files', family.get('files', [])) or []]
+    path_semantics = dict(family.get('path_semantics') or {})
+    date_format = family.get('date_format')
+    partition_type = str(family.get('partition_type') or 'Unknown')
+
+    parsed_files = [
+        _parse_member_file(path, date_format=date_format, path_semantics=path_semantics)
+        for path in member_files
+    ]
+    parsed_files = [row for row in parsed_files if is_probably_structured_data(row['source_path'])]
+    parsed_files = _sort_candidates(parsed_files, prefer_br=(partition_type != 'State-Partitioned'))
+
+    selected_docs: list[FamilyCandidateDoc] = []
+    docs = sorted(
+        list(family.get('associated_docs') or []),
+        key=lambda row: (float(row.get('score') or 0.0), str(row.get('filename') or row.get('url') or '')),
+        reverse=True,
+    )
+    seen_doc_urls: set[str] = set()
+    for row in docs:
+        url = str(row.get('url') or '')
+        if not url or url in seen_doc_urls:
+            continue
+        seen_doc_urls.add(url)
+        selected_docs.append(FamilyCandidateDoc(
+            url=url,
+            filename=str(row.get('filename') or PurePosixPath(url).name),
+            score=float(row['score']) if row.get('score') is not None else None,
+            selection_rank=len(selected_docs) + 1,
+            selection_reason='top associated document by relevance score',
+        ))
+        if len(selected_docs) >= max_docs:
+            break
+
+    return FamilyCandidateSelection(
+        family_id=str(family.get('family_id') or ''),
+        series_prefix=family.get('series_prefix'),
+        partition_type=partition_type,
+        date_format=date_format,
+        time_range_display=family.get('time_range_display'),
+        member_file_count=len(member_files),
+        selected_data_files=_select_diverse_files(parsed_files, partition_type=partition_type, max_data_files=max_data_files),
+        selected_docs=selected_docs,
+    )
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/similarity.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from difflib import SequenceMatcher
+from typing import Any
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    union = left | right
+    if not union:
+        return 0.0
+    return len(left & right) / len(union)
+
+
+def _normalize_name(name: str) -> str:
+    return ''.join(ch for ch in str(name).upper() if ch.isalnum())
+
+
+def _name_similarity(left: str, right: str) -> float:
+    return SequenceMatcher(None, _normalize_name(left), _normalize_name(right)).ratio()
+
+
+def _family_members(family: dict[str, Any]) -> list[str]:
+    return [str(path) for path in family.get('member_files', family.get('files', [])) or []]
+
+
+@dataclass(frozen=True)
+class FamilySimilarityPair:
+    family_a: str
+    family_b: str
+    similarity: float
+    shared_variables: list[str]
+    family_a_variable_count: int
+    family_b_variable_count: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def build_family_registry(
-    families: list[dict[str, Any]],
-    profile_rows: list[dict[str, Any]] | None = None,
-) -> list[FamilyRegistryEntry]:
-    profile_rows = profile_rows or []
-    variables_by_path: dict[str, set[str]] = {}
+@dataclass(frozen=True)
+class FamilySimilarityCluster:
+    cluster_id: str
+    families: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class VariableSimilarityCluster:
+    cluster_id: str
+    family_cluster_id: str
+    variables: list[str]
+    families: list[str]
+    strongest_name_similarity: float
+    strongest_value_similarity: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _family_variable_sets(profile_rows: list[dict[str, Any]], families: list[dict[str, Any]]) -> dict[str, set[str]]:
+    path_to_family: dict[str, set[str]] = {}
+    for family in families:
+        family_id = str(family.get('family_id') or '')
+        for path in _family_members(family):
+            path_to_family.setdefault(path, set()).add(family_id)
+
+    out: dict[str, set[str]] = {}
     for row in profile_rows:
-        path = str(row.get('path') or '')
-        field_names = {
+        path = str(row.get('source_path') or row.get('path') or '')
+        variables = {
             str(field.get('name') or '').upper()
             for field in row.get('field_profiles') or []
             if str(field.get('name') or '').strip()
         }
-        variables_by_path[path] = field_names
-
-    out: list[FamilyRegistryEntry] = []
-    for family in families:
-        paths = [str(path) for path in family.get('files', []) or []]
-        family_vars: set[str] = set()
-        for path in paths:
-            family_vars.update(variables_by_path.get(path, set()))
-        out.append(FamilyRegistryEntry(
-            family_id=str(family.get('family_id') or ''),
-            system_guess=family.get('system_guess'),
-            series_prefix=family.get('series_prefix'),
-            partition_type=str(family.get('partition_type') or 'Unknown'),
-            date_format=family.get('date_format'),
-            time_range_display=family.get('time_range_display'),
-            file_count=int(family.get('file_count') or 0),
-            source_paths=list(family.get('source_paths') or []),
-            schema_signatures=list(family.get('schema_signatures') or []),
-            variable_count=len(family_vars),
-            variables=sorted(family_vars),
-            associated_docs=list(family.get('associated_docs') or []),
-        ))
+        for family_id in path_to_family.get(path, set()):
+            out.setdefault(family_id, set()).update(variables)
     return out
 
 
-
-###############################################################################
-### FILE: pegasus_data/datasus/profile/variables.py
-###############################################################################
-from __future__ import annotations
-
-from collections import Counter
-from dataclasses import asdict, dataclass
-from typing import Any
-
-
-@dataclass(frozen=True)
-class VariableCatalogEntry:
-    variable: str
-    family_count: int
-    file_count: int
-    primitive_types: list[str]
-    scopes: list[str]
-    samples: list[str]
-    signals: list[str]
-    dataset_overrides: list[str]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+def _connected_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
+    seen: set[str] = set()
+    components: list[list[str]] = []
+    for node in adjacency:
+        if node in seen:
+            continue
+        stack = [node]
+        component: list[str] = []
+        seen.add(node)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            for neighbor in adjacency.get(current, set()):
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    stack.append(neighbor)
+        components.append(sorted(component))
+    return sorted(components, key=lambda values: (-len(values), values))
 
 
-def _family_index(families: list[dict[str, Any]]) -> dict[str, set[str]]:
-    out: dict[str, set[str]] = {}
+def build_family_similarity_report(
+    profile_rows: list[dict[str, Any]],
+    families: list[dict[str, Any]],
+    *,
+    similarity_threshold: float = 0.8,
+) -> dict[str, Any]:
+    variable_sets = _family_variable_sets(profile_rows, families)
+    family_ids = sorted(variable_sets)
+    pairs: list[FamilySimilarityPair] = []
+    adjacency: dict[str, set[str]] = {family_id: set() for family_id in family_ids}
+
+    for idx, family_a in enumerate(family_ids):
+        for family_b in family_ids[idx + 1:]:
+            left = variable_sets[family_a]
+            right = variable_sets[family_b]
+            similarity = _jaccard(left, right)
+            shared = sorted(left & right)
+            pairs.append(FamilySimilarityPair(
+                family_a=family_a,
+                family_b=family_b,
+                similarity=round(similarity, 4),
+                shared_variables=shared,
+                family_a_variable_count=len(left),
+                family_b_variable_count=len(right),
+            ))
+            if similarity >= similarity_threshold:
+                adjacency[family_a].add(family_b)
+                adjacency[family_b].add(family_a)
+
+    components = _connected_components(adjacency) if adjacency else []
+    clusters = [
+        FamilySimilarityCluster(cluster_id=f'family_cluster_{index + 1}', families=component)
+        for index, component in enumerate(components)
+    ]
+    return {
+        'threshold': similarity_threshold,
+        'family_pairs': [row.to_dict() for row in sorted(pairs, key=lambda row: row.similarity, reverse=True)],
+        'family_clusters': [row.to_dict() for row in clusters],
+    }
+
+
+def build_variable_similarity_report(
+    profile_rows: list[dict[str, Any]],
+    families: list[dict[str, Any]],
+    *,
+    family_similarity_threshold: float = 0.8,
+    name_similarity_threshold: float = 0.85,
+    value_similarity_threshold: float = 0.6,
+) -> dict[str, Any]:
+    family_report = build_family_similarity_report(profile_rows, families, similarity_threshold=family_similarity_threshold)
+    path_to_family: dict[str, set[str]] = {}
     for family in families:
         family_id = str(family.get('family_id') or '')
-        for path in family.get('files', []) or []:
-            out.setdefault(str(path), set()).add(family_id)
-    return out
+        for path in _family_members(family):
+            path_to_family.setdefault(path, set()).add(family_id)
 
-
-def build_variable_catalog(
-    profile_rows: list[dict[str, Any]],
-    *,
-    families: list[dict[str, Any]] | None = None,
-    sample_limit: int = 12,
-) -> list[VariableCatalogEntry]:
-    path_to_families = _family_index(families or [])
-    bucket: dict[str, dict[str, Any]] = {}
-
+    variable_profiles: dict[str, dict[str, Any]] = {}
     for row in profile_rows:
-        path = str(row.get('path') or '')
-        families_for_path = path_to_families.get(path) or set()
+        path = str(row.get('source_path') or row.get('path') or '')
+        scopes = path_to_family.get(path, set())
         for field in row.get('field_profiles') or []:
             variable = str(field.get('name') or '').upper()
             if not variable:
                 continue
-            slot = bucket.setdefault(variable, {
-                'file_paths': set(),
-                'family_ids': set(),
-                'primitive_types': Counter(),
-                'samples': Counter(),
-                'signals': Counter(),
-                'dataset_overrides': set(),
+            profile = variable_profiles.setdefault(variable, {
+                'scopes': set(),
+                'value_space': set(),
             })
-            slot['file_paths'].add(path)
-            slot['family_ids'].update(families_for_path)
-            slot['primitive_types'][str(field.get('primitive_type') or 'unknown')] += 1
-            for sample in field.get('samples') or []:
-                text = str(sample).strip()
-                if text:
-                    slot['samples'][text] += 1
-            for signal in field.get('signals') or []:
-                slot['signals'][str(signal)] += 1
-            for family_id in families_for_path:
-                slot['dataset_overrides'].add(family_id)
+            profile['scopes'].update(scopes)
+            profile['value_space'].update(str(sample).strip() for sample in field.get('samples') or [] if str(sample).strip())
 
-    out: list[VariableCatalogEntry] = []
-    for variable in sorted(bucket):
-        slot = bucket[variable]
-        out.append(VariableCatalogEntry(
-            variable=variable,
-            family_count=len(slot['family_ids']),
-            file_count=len(slot['file_paths']),
-            primitive_types=[name for name, _ in slot['primitive_types'].most_common()],
-            scopes=sorted(slot['family_ids']),
-            samples=[name for name, _ in slot['samples'].most_common(sample_limit)],
-            signals=[name for name, _ in slot['signals'].most_common()],
-            dataset_overrides=sorted(slot['dataset_overrides']),
-        ))
-    return out
-
-
-
-###############################################################################
-### FILE: pegasus_data/datasus/translate/bundle.py
-###############################################################################
-from __future__ import annotations
-
-from dataclasses import asdict, dataclass
-from typing import Any
-
-
-@dataclass(frozen=True)
-class TranslationBundle:
-    family_id: str
-    prompt_text: str
-    variables: list[dict[str, Any]]
-    docs: list[dict[str, Any]]
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-def build_translation_bundle(
-    family: dict[str, Any],
-    profile_rows: list[dict[str, Any]],
-    variable_catalog: list[dict[str, Any]],
-    *,
-    max_fields: int = 120,
-) -> TranslationBundle:
-    profile_map = {str(row.get('path') or ''): row for row in profile_rows}
-    catalog_map = {str(row.get('variable') or '').upper(): row for row in variable_catalog}
-    variables: list[dict[str, Any]] = []
-    for path in family.get('files', []) or []:
-        row = profile_map.get(str(path))
-        if not row:
-            continue
-        for field in row.get('field_profiles', []) or []:
-            name = str(field.get('name') or '').upper()
-            merged = dict(field)
-            if name in catalog_map:
-                merged['catalog'] = catalog_map[name]
-            merged['path'] = str(path)
-            variables.append(merged)
-
-    variables.sort(key=lambda item: (-(item.get('catalog') or {}).get('family_count', 0), str(item.get('name') or '')))
-    variables = variables[:max_fields]
-
-    lines: list[str] = [
-        'TASK: produce compact translation grammar blocks for this DATASUS dataset family.',
-        'OUTPUT ONLY grammar lines using directives: $, @, =, >, ~, %.',
-        'Prefer GLOBAL entries for shared variables. Use @ only for real family-specific overrides.',
-        'Kinds: cat date mun uf num txt code id flag unknown',
-        'Rules available: ibge6 ibge7 cid10 date8 date6 upper stripdigits',
-        '',
-        f'FAMILY {family.get("family_id")}',
-        f'SYSTEM {family.get("system_guess") or "UNKNOWN"}',
-        f'PREFIX {family.get("series_prefix") or "UNKNOWN"}',
-        f'FILES {family.get("file_count") or 0}',
+    contexts = family_report['family_clusters'] or [
+        {'cluster_id': f'family_cluster_{index + 1}', 'families': [str(family.get('family_id') or '')]}
+        for index, family in enumerate(families)
     ]
-    if family.get('time_range_display'):
-        lines.append(f'TIME {family.get("time_range_display")}')
-    lines.append('')
-    docs = family.get('associated_docs') or []
-    if docs:
-        lines.append('DOCS')
-        for doc in docs[:12]:
-            url = doc.get('url') or ''
-            score = doc.get('score')
-            lines.append(f'- {score} {url}'.rstrip())
-        lines.append('')
-    lines.append('FIELDS')
-    for item in variables:
-        name = str(item.get('name') or '')
-        primitive = str(item.get('primitive_type') or 'unknown')
-        samples = ', '.join((item.get('samples') or [])[:6])
-        shared = (item.get('catalog') or {}).get('family_count', 0)
-        signals = ','.join((item.get('signals') or [])[:4])
-        lines.append(f'- {name} | {primitive} | shared={shared} | sig={signals} | samp={samples}')
-    lines.extend(['', 'Return grammar only.'])
+    clusters: list[VariableSimilarityCluster] = []
+    for context in contexts:
+        context_id = str(context.get('cluster_id') or '')
+        context_families = set(str(value) for value in context.get('families') or [])
+        context_variables = [
+            name for name, profile in variable_profiles.items()
+            if profile['scopes'] & context_families
+        ]
+        adjacency: dict[str, set[str]] = {name: set() for name in context_variables}
+        strengths: dict[tuple[str, str], tuple[float, float]] = {}
+        for idx, left_name in enumerate(context_variables):
+            left_profile = variable_profiles[left_name]
+            for right_name in context_variables[idx + 1:]:
+                right_profile = variable_profiles[right_name]
+                if left_profile['scopes'] & right_profile['scopes']:
+                    continue
+                name_similarity = _name_similarity(left_name, right_name)
+                value_similarity = _jaccard(left_profile['value_space'], right_profile['value_space'])
+                if name_similarity >= name_similarity_threshold and value_similarity >= value_similarity_threshold:
+                    adjacency[left_name].add(right_name)
+                    adjacency[right_name].add(left_name)
+                    strengths[(left_name, right_name)] = (name_similarity, value_similarity)
+        for component in _connected_components(adjacency):
+            if len(component) < 2:
+                continue
+            strongest_name = 0.0
+            strongest_value = 0.0
+            component_pairs = [
+                strengths.get((left, right)) or strengths.get((right, left))
+                for idx, left in enumerate(component)
+                for right in component[idx + 1:]
+            ]
+            for pair in component_pairs:
+                if pair is None:
+                    continue
+                strongest_name = max(strongest_name, pair[0])
+                strongest_value = max(strongest_value, pair[1])
+            scopes = sorted({
+                family_id
+                for variable in component
+                for family_id in variable_profiles[variable]['scopes']
+                if family_id in context_families
+            })
+            clusters.append(VariableSimilarityCluster(
+                cluster_id=f'{context_id}_var_cluster_{len(clusters) + 1}',
+                family_cluster_id=context_id,
+                variables=component,
+                families=scopes,
+                strongest_name_similarity=round(strongest_name, 4),
+                strongest_value_similarity=round(strongest_value, 4),
+            ))
 
-    return TranslationBundle(
-        family_id=str(family.get('family_id') or ''),
-        prompt_text='\n'.join(lines),
-        variables=variables,
-        docs=list(docs),
-    )
+    return {
+        'family_similarity': family_report,
+        'variable_similarity_thresholds': {
+            'name_similarity_threshold': name_similarity_threshold,
+            'value_similarity_threshold': value_similarity_threshold,
+        },
+        'variable_clusters': [row.to_dict() for row in clusters],
+    }
 
 
 
@@ -340,12 +594,19 @@ from pathlib import Path
 
 from .common.io import read_jsonl, write_json, write_jsonl
 from .common.logging import configure_logging
-from .datasus.decode.inspect import inspect_dbase_file
+from .datasus.decode.inspect import inspect_file
 from .datasus.discovery.catalog import build_series_catalog, write_series_catalog
+from .datasus.discovery.docs import build_family_document_registry
 from .datasus.discovery.manifest import parse_manifest_text, read_manifest_jsonl, write_manifest_jsonl
+from .datasus.fetch import download_plans, plan_family_candidate_downloads, select_family_candidates
 from .datasus.ftp import DatasusFtpScanner, diff_scan_outputs
 from .datasus.inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
-from .datasus.profile import build_variable_catalog, profile_dbase_file
+from .datasus.profile import (
+    build_family_similarity_report,
+    build_variable_catalog,
+    build_variable_similarity_report,
+    profile_file,
+)
 from .datasus.translate import (
     build_translation_bundle,
     emit_translation_grammar,
@@ -357,9 +618,6 @@ from .sidra.catalog.schema import ensure_schema
 from .sidra.catalog.search import SearchArgs, search_tables, show_table
 from .sidra.values import fetch_and_normalize_values_sharded
 
-_DBASE_EXTS = {'.dbf', '.dbc'}
-
-
 def _load_manifest_like(path: str, *, scan_id: str | None = None):
     return read_manifest_jsonl(path) if path.lower().endswith('.jsonl') else parse_manifest_text(path, scan_id=scan_id)
 
@@ -368,15 +626,45 @@ def _load_json(path: str):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+def _load_rows_input(path: str) -> list[dict]:
+    if path.lower().endswith('.jsonl'):
+        return list(read_jsonl(path))
+    payload = _load_json(path)
+    if isinstance(payload, list):
+        return payload
+    for key in ('rows', 'downloads', 'items', 'selected_data_files'):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    raise SystemExit(f'unsupported row payload: {path}')
+
+
+def _load_family_row(path: str, family_id: str) -> dict:
+    families = _load_json(path)
+    family = next((row for row in families if str(row.get('family_id')) == family_id), None)
+    if family is None:
+        raise SystemExit(f'family not found: {family_id}')
+    return family
+
+
 def _profile_signature_map(profile_jsonl: str | None) -> tuple[dict[str, str], list[dict]]:
     schema_signatures: dict[str, str] = {}
     profile_rows: list[dict] = []
     if profile_jsonl:
         for row in read_jsonl(profile_jsonl):
             profile_rows.append(row)
-            if 'path' in row and 'schema_signature' in row:
-                schema_signatures[str(row['path'])] = str(row['schema_signature'])
+            source_path = str(row.get('source_path') or row.get('path') or '')
+            if source_path and 'schema_signature' in row:
+                schema_signatures[source_path] = str(row['schema_signature'])
     return schema_signatures, profile_rows
+
+
+def _profile_input_path(row: dict) -> str | None:
+    for key in ('local_path', 'path', 'full_path', 'target_path'):
+        value = row.get(key)
+        if value:
+            return str(value)
+    return None
 
 
 def _cmd_datasus_manifest(args: argparse.Namespace) -> None:
@@ -429,13 +717,43 @@ def _cmd_datasus_family_registry(args: argparse.Namespace) -> None:
     print(f'wrote {len(registry)} family registry rows -> {args.output}')
 
 
+def _cmd_datasus_family_candidates(args: argparse.Namespace) -> None:
+    family = _load_family_row(args.family_registry, args.family_id)
+    selection = select_family_candidates(family, max_data_files=args.max_data_files, max_docs=args.max_docs)
+    write_json(args.output, selection.to_dict())
+    print(f'wrote candidate selection -> {args.output}')
+
+
+def _cmd_datasus_download_candidates(args: argparse.Namespace) -> None:
+    selection = _load_json(args.input)
+    plans = plan_family_candidate_downloads(selection, asset_kind='data', root=args.root)
+    results = download_plans(plans, overwrite=args.overwrite, dry_run=args.dry_run)
+    write_json(args.output, results)
+    print(f'wrote {len(results)} candidate download rows -> {args.output}')
+
+
+def _cmd_datasus_download_docs(args: argparse.Namespace) -> None:
+    selection = _load_json(args.input)
+    plans = plan_family_candidate_downloads(selection, asset_kind='doc', root=args.root)
+    results = download_plans(plans, overwrite=args.overwrite, dry_run=args.dry_run)
+    write_json(args.output, results)
+    print(f'wrote {len(results)} document download rows -> {args.output}')
+
+
+def _cmd_datasus_doc_registry(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    registry = build_family_document_registry(families, doc_root=args.doc_root, max_chars=args.max_chars)
+    write_json(args.output, [row.to_dict() for row in registry])
+    print(f'wrote {len(registry)} family document rows -> {args.output}')
+
+
 def _cmd_datasus_inspect(args: argparse.Namespace) -> None:
-    preview = inspect_dbase_file(args.path, sample_rows=args.rows)
+    preview = inspect_file(args.path, sample_rows=args.rows)
     print(json.dumps(preview.to_dict(), ensure_ascii=False, indent=2, default=str))
 
 
 def _cmd_datasus_profile(args: argparse.Namespace) -> None:
-    profile = profile_dbase_file(args.path, sample_rows=args.sample_rows)
+    profile = profile_file(args.path, sample_rows=args.sample_rows)
     if args.output:
         write_json(args.output, profile.to_dict())
         print(f'wrote profile -> {args.output}')
@@ -444,19 +762,36 @@ def _cmd_datasus_profile(args: argparse.Namespace) -> None:
 
 
 def _cmd_datasus_profile_many(args: argparse.Namespace) -> None:
-    rows = list(read_jsonl(args.input))
+    rows = _load_rows_input(args.input)
     out_rows = []
     count = 0
     for row in rows:
-        path = row.get('path') or row.get('full_path')
-        if not path or Path(path).suffix.lower() not in _DBASE_EXTS:
+        path = _profile_input_path(row)
+        if not path:
             continue
         try:
-            profile = profile_dbase_file(path, sample_rows=args.sample_rows)
+            profile = profile_file(
+                path,
+                sample_rows=args.sample_rows,
+                source_path=str(row.get('source_path') or row.get('path') or path),
+                local_path=str(row.get('local_path') or path),
+            )
         except Exception as exc:
-            out_rows.append({'path': path, 'error': str(exc)})
+            out_rows.append({
+                'path': path,
+                'source_path': row.get('source_path') or row.get('path') or path,
+                'local_path': row.get('local_path') or path,
+                'error': str(exc),
+            })
             continue
-        out_rows.append(profile.to_dict())
+        payload = profile.to_dict()
+        if row.get('source_path'):
+            payload['source_path'] = row['source_path']
+        if row.get('family_id'):
+            payload['family_id'] = row['family_id']
+        if row.get('local_path'):
+            payload['local_path'] = row['local_path']
+        out_rows.append(payload)
         count += 1
         if args.limit and count >= args.limit:
             break
@@ -470,6 +805,28 @@ def _cmd_datasus_variable_catalog(args: argparse.Namespace) -> None:
     catalog = build_variable_catalog(profiles, families=families)
     write_json(args.output, [row.to_dict() for row in catalog])
     print(f'wrote {len(catalog)} variable catalog rows -> {args.output}')
+
+
+def _cmd_datasus_similarity_report(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families)
+    payload = build_variable_similarity_report(
+        profiles,
+        families,
+        family_similarity_threshold=args.family_threshold,
+        name_similarity_threshold=args.name_threshold,
+        value_similarity_threshold=args.value_threshold,
+    )
+    write_json(args.output, payload)
+    print(f'wrote similarity report -> {args.output}')
+
+
+def _cmd_datasus_family_similarity(args: argparse.Namespace) -> None:
+    profiles = list(read_jsonl(args.profile_jsonl))
+    families = _load_json(args.families)
+    payload = build_family_similarity_report(profiles, families, similarity_threshold=args.threshold)
+    write_json(args.output, payload)
+    print(f'wrote family similarity report -> {args.output}')
 
 
 def _cmd_datasus_translate_validate(args: argparse.Namespace) -> None:
@@ -545,7 +902,14 @@ def _cmd_datasus_translate_bundle(args: argparse.Namespace) -> None:
         raise SystemExit(f'family not found: {args.family_id}')
     profile_rows = list(read_jsonl(args.profile_jsonl))
     variable_catalog = _load_json(args.variable_catalog)
-    bundle = build_translation_bundle(family, profile_rows, variable_catalog, max_fields=args.max_fields)
+    document_registry = _load_json(args.doc_registry) if args.doc_registry else None
+    bundle = build_translation_bundle(
+        family,
+        profile_rows,
+        variable_catalog,
+        document_registry=document_registry,
+        max_fields=args.max_fields,
+    )
     if args.output_json:
         write_json(args.output_json, bundle.to_dict())
     Path(args.output_text).parent.mkdir(parents=True, exist_ok=True)
@@ -658,6 +1022,37 @@ def build_parser() -> argparse.ArgumentParser:
     family_registry.add_argument('--profile-jsonl', default=None)
     family_registry.set_defaults(func=_cmd_datasus_family_registry)
 
+    family_candidates = datasus_sub.add_parser('family-candidates')
+    family_candidates.add_argument('family_id')
+    family_candidates.add_argument('family_registry')
+    family_candidates.add_argument('output')
+    family_candidates.add_argument('--max-data-files', type=int, default=3)
+    family_candidates.add_argument('--max-docs', type=int, default=5)
+    family_candidates.set_defaults(func=_cmd_datasus_family_candidates)
+
+    download_candidates = datasus_sub.add_parser('download-candidates')
+    download_candidates.add_argument('input')
+    download_candidates.add_argument('output')
+    download_candidates.add_argument('--root', default=None)
+    download_candidates.add_argument('--overwrite', action='store_true')
+    download_candidates.add_argument('--dry-run', action='store_true')
+    download_candidates.set_defaults(func=_cmd_datasus_download_candidates)
+
+    download_docs = datasus_sub.add_parser('download-docs')
+    download_docs.add_argument('input')
+    download_docs.add_argument('output')
+    download_docs.add_argument('--root', default=None)
+    download_docs.add_argument('--overwrite', action='store_true')
+    download_docs.add_argument('--dry-run', action='store_true')
+    download_docs.set_defaults(func=_cmd_datasus_download_docs)
+
+    doc_registry = datasus_sub.add_parser('doc-registry')
+    doc_registry.add_argument('families')
+    doc_registry.add_argument('output')
+    doc_registry.add_argument('--doc-root', required=True)
+    doc_registry.add_argument('--max-chars', type=int, default=4000)
+    doc_registry.set_defaults(func=_cmd_datasus_doc_registry)
+
     catalog = datasus_sub.add_parser('catalog')
     catalog.add_argument('input')
     catalog.add_argument('output')
@@ -676,7 +1071,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile.set_defaults(func=_cmd_datasus_profile)
 
     profile_many = datasus_sub.add_parser('profile-many')
-    profile_many.add_argument('input', help='Inventory JSONL or scan JSONL')
+    profile_many.add_argument('input', help='Inventory JSONL, download JSON, or scan JSONL')
     profile_many.add_argument('output')
     profile_many.add_argument('--sample-rows', type=int, default=500)
     profile_many.add_argument('--limit', type=int, default=None)
@@ -687,6 +1082,22 @@ def build_parser() -> argparse.ArgumentParser:
     variable_catalog.add_argument('output')
     variable_catalog.add_argument('--families', default=None)
     variable_catalog.set_defaults(func=_cmd_datasus_variable_catalog)
+
+    family_similarity = datasus_sub.add_parser('family-similarity')
+    family_similarity.add_argument('profile_jsonl')
+    family_similarity.add_argument('families')
+    family_similarity.add_argument('output')
+    family_similarity.add_argument('--threshold', type=float, default=0.8)
+    family_similarity.set_defaults(func=_cmd_datasus_family_similarity)
+
+    similarity_report = datasus_sub.add_parser('similarity-report')
+    similarity_report.add_argument('profile_jsonl')
+    similarity_report.add_argument('families')
+    similarity_report.add_argument('output')
+    similarity_report.add_argument('--family-threshold', type=float, default=0.8)
+    similarity_report.add_argument('--name-threshold', type=float, default=0.85)
+    similarity_report.add_argument('--value-threshold', type=float, default=0.6)
+    similarity_report.set_defaults(func=_cmd_datasus_similarity_report)
 
     tval = datasus_sub.add_parser('translate-validate')
     tval.add_argument('input')
@@ -721,6 +1132,7 @@ def build_parser() -> argparse.ArgumentParser:
     tbundle.add_argument('profile_jsonl')
     tbundle.add_argument('variable_catalog')
     tbundle.add_argument('output_text')
+    tbundle.add_argument('--doc-registry', default=None)
     tbundle.add_argument('--output-json', default=None)
     tbundle.add_argument('--max-fields', type=int, default=120)
     tbundle.set_defaults(func=_cmd_datasus_translate_bundle)
@@ -1048,17 +1460,25 @@ def get_settings() -> Settings:
 ### FILE: pegasus_data/datasus/__init__.py
 ###############################################################################
 from .ftp import DatasusFtpScanner, diff_scan_outputs
+from .fetch import plan_family_candidate_downloads, select_family_candidates, download_plans
 from .inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
-from .profile import build_variable_catalog, profile_dbase_file
+from .discovery import build_family_document_registry
+from .profile import build_family_similarity_report, build_variable_catalog, build_variable_similarity_report, profile_dbase_file
 from .translate import build_translation_bundle, emit_translation_grammar, parse_translation_grammar_file, validate_translation_registry
 
 __all__ = [
     'DatasusFtpScanner',
     'diff_scan_outputs',
+    'select_family_candidates',
+    'plan_family_candidate_downloads',
+    'download_plans',
     'build_dataset_families',
     'build_family_registry',
+    'build_family_document_registry',
     'inventory_from_scan_jsonl',
     'build_variable_catalog',
+    'build_family_similarity_report',
+    'build_variable_similarity_report',
     'profile_dbase_file',
     'build_translation_bundle',
     'emit_translation_grammar',
@@ -1072,7 +1492,7 @@ __all__ = [
 ### FILE: pegasus_data/datasus/decode/__init__.py
 ###############################################################################
 from .dbase import DatasusDecodeError, dbc_as_temp_dbf, open_dbf, load_dbase_metadata, iter_dbase_rows
-from .inspect import DecodedFilePreview, inspect_dbase_file
+from .inspect import DecodedFilePreview, inspect_dbase_file, inspect_file
 
 __all__ = [
     'DatasusDecodeError',
@@ -1081,6 +1501,7 @@ __all__ = [
     'load_dbase_metadata',
     'iter_dbase_rows',
     'DecodedFilePreview',
+    'inspect_file',
     'inspect_dbase_file',
 ]
 
@@ -1189,11 +1610,19 @@ def _iter_dbf_rows(dbf_path: str, *, raw_file: str, encoding: str | None = None)
 ###############################################################################
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import csv
+import gzip
+import json
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .dbase import iter_dbase_rows, load_dbase_metadata
+
+_STRUCTURED_EXTS = {'.dbf', '.dbc', '.json', '.xml', '.csv'}
 
 
 @dataclass(frozen=True)
@@ -1202,24 +1631,180 @@ class DecodedFilePreview:
     file_format: str
     field_names: list[str]
     sample_rows: list[dict[str, Any]]
+    source_path: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {str(key).upper(): value for key, value in row.items()}
+
+
+def _json_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        rows = [item for item in payload if isinstance(item, dict)]
+        if rows:
+            return [_normalize_row(item) for item in rows]
+    if isinstance(payload, dict):
+        list_candidates = [
+            value for value in payload.values()
+            if isinstance(value, list) and any(isinstance(item, dict) for item in value)
+        ]
+        if list_candidates:
+            best = max(list_candidates, key=lambda value: len(value))
+            return [_normalize_row(item) for item in best if isinstance(item, dict)]
+        return [_normalize_row(payload)]
+    return []
+
+
+def _xml_rows(path: Path) -> list[dict[str, Any]]:
+    root = ET.parse(path).getroot()
+    repeated: dict[str, list[ET.Element]] = {}
+    for child in list(root):
+        repeated.setdefault(child.tag, []).append(child)
+    repeated = {tag: nodes for tag, nodes in repeated.items() if len(nodes) > 1}
+    if repeated:
+        tag, nodes = max(repeated.items(), key=lambda item: len(item[1]))
+        rows: list[dict[str, Any]] = []
+        for node in nodes:
+            row = {sub.tag.upper(): (sub.text or '').strip() for sub in list(node)}
+            if row:
+                rows.append(row)
+        if rows:
+            return rows
+    row = {child.tag.upper(): (child.text or '').strip() for child in list(root)}
+    return [row] if row else []
+
+
+def _csv_rows(path: Path, *, sample_rows: int) -> list[dict[str, Any]]:
+    with path.open('r', encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        rows: list[dict[str, Any]] = []
+        for row in reader:
+            rows.append(_normalize_row(dict(row)))
+            if len(rows) >= sample_rows:
+                break
+    return rows
+
+
+def _choose_archive_member(names: list[str]) -> str | None:
+    ranked: list[tuple[int, str]] = []
+    for name in names:
+        lower = name.lower()
+        for extension in ('.json', '.xml', '.csv', '.dbf', '.dbc'):
+            if lower.endswith(extension):
+                rank = {'.json': 5, '.xml': 4, '.csv': 3, '.dbf': 2, '.dbc': 1}[extension]
+                ranked.append((rank, name))
+                break
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return ranked[0][1]
+
+
+def _inspect_zip(path: Path, *, sample_rows: int) -> DecodedFilePreview:
+    with zipfile.ZipFile(path) as archive:
+        names = [name for name in archive.namelist() if not name.endswith('/')]
+        chosen = _choose_archive_member(names)
+        if chosen is None:
+            rows = [{'ARCHIVE_MEMBER': name} for name in names[:sample_rows]]
+            return DecodedFilePreview(
+                path=str(path),
+                file_format='zip',
+                field_names=['ARCHIVE_MEMBER'],
+                sample_rows=rows,
+                warnings=['zip archive does not contain an obvious structured primary member'],
+            )
+        suffix = Path(chosen).suffix.lower()
+        with archive.open(chosen) as handle:
+            data = handle.read()
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
+            temp.write(data)
+            temp_path = Path(temp.name)
+        try:
+            preview = inspect_file(str(temp_path), sample_rows=sample_rows, source_path=str(path))
+            warnings = list(preview.warnings)
+            warnings.append(f'parsed archive member: {chosen}')
+            return DecodedFilePreview(
+                path=str(path),
+                file_format=f'zip:{preview.file_format}',
+                field_names=preview.field_names,
+                sample_rows=preview.sample_rows,
+                source_path=str(path),
+                warnings=warnings,
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+
+def _inspect_gzip(path: Path, *, sample_rows: int) -> DecodedFilePreview:
+    target_name = path.stem
+    suffix = Path(target_name).suffix.lower()
+    with gzip.open(path, 'rb') as handle:
+        data = handle.read()
+    with tempfile.NamedTemporaryFile(suffix=suffix or '.tmp', delete=False) as temp:
+        temp.write(data)
+        temp_path = Path(temp.name)
+    try:
+        preview = inspect_file(str(temp_path), sample_rows=sample_rows, source_path=str(path))
+        warnings = list(preview.warnings)
+        warnings.append(f'parsed gzip payload: {target_name}')
+        return DecodedFilePreview(
+            path=str(path),
+            file_format=f'gzip:{preview.file_format}',
+            field_names=preview.field_names,
+            sample_rows=preview.sample_rows,
+            source_path=str(path),
+            warnings=warnings,
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def inspect_file(path: str, *, sample_rows: int = 5, source_path: str | None = None) -> DecodedFilePreview:
+    target = Path(path)
+    suffixes = [suffix.lower() for suffix in target.suffixes]
+    if not suffixes:
+        raise RuntimeError(f'unsupported file format: {path}')
+    suffix = suffixes[-1]
+    if suffix in {'.dbf', '.dbc'}:
+        metadata = load_dbase_metadata(path)
+        rows: list[dict[str, Any]] = []
+        for row in iter_dbase_rows(path):
+            rows.append(row.fields)
+            if len(rows) >= sample_rows:
+                break
+        return DecodedFilePreview(
+            path=str(target),
+            file_format=metadata.file_format,
+            field_names=metadata.field_names,
+            sample_rows=rows,
+            source_path=source_path,
+        )
+    if suffix == '.json':
+        payload = json.loads(target.read_text(encoding='utf-8'))
+        rows = _json_rows(payload)[:sample_rows]
+        field_names = sorted({key for row in rows for key in row})
+        return DecodedFilePreview(str(target), 'json', field_names, rows, source_path=source_path)
+    if suffix == '.xml':
+        rows = _xml_rows(target)[:sample_rows]
+        field_names = sorted({key for row in rows for key in row})
+        return DecodedFilePreview(str(target), 'xml', field_names, rows, source_path=source_path)
+    if suffix == '.csv':
+        rows = _csv_rows(target, sample_rows=sample_rows)
+        field_names = sorted({key for row in rows for key in row})
+        return DecodedFilePreview(str(target), 'csv', field_names, rows, source_path=source_path)
+    if suffix == '.zip':
+        return _inspect_zip(target, sample_rows=sample_rows)
+    if suffix == '.gz':
+        return _inspect_gzip(target, sample_rows=sample_rows)
+    raise RuntimeError(f'unsupported file format: {path}')
+
+
 def inspect_dbase_file(path: str, *, sample_rows: int = 5) -> DecodedFilePreview:
-    metadata = load_dbase_metadata(path)
-    rows: list[dict[str, Any]] = []
-    for row in iter_dbase_rows(path):
-        rows.append(row.fields)
-        if len(rows) >= sample_rows:
-            break
-    return DecodedFilePreview(
-        path=str(Path(path)),
-        file_format=metadata.file_format,
-        field_names=metadata.field_names,
-        sample_rows=rows,
-    )
+    return inspect_file(path, sample_rows=sample_rows)
 
 
 
@@ -1228,8 +1813,9 @@ def inspect_dbase_file(path: str, *, sample_rows: int = 5) -> DecodedFilePreview
 ###############################################################################
 from .manifest import parse_manifest_text
 from .catalog import build_series_catalog
+from .docs import build_family_document_registry
 
-__all__ = ["parse_manifest_text", "build_series_catalog"]
+__all__ = ["parse_manifest_text", "build_series_catalog", "build_family_document_registry"]
 
 
 
@@ -1346,8 +1932,17 @@ def write_series_catalog(path: str, series_rows: list[SeriesCatalogEntry]) -> No
 ###############################################################################
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
+import json
+from pathlib import Path
+import tempfile
+from typing import Any
+from urllib.parse import urlparse
+
+from ...common.hashing import sha256_file
+from ...common.storage import ensure_directory
+from ...config import get_settings
 
 try:
     from rapidfuzz import fuzz
@@ -1379,6 +1974,21 @@ class PdfMatch:
     url: str
     score: float
     filename: str
+
+
+@dataclass(frozen=True)
+class FamilyDocumentEntry:
+    family_id: str
+    url: str
+    filename: str
+    score: float | None
+    local_path: str | None
+    extraction_status: str
+    content_type: str | None
+    excerpt: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def tree_distance(a_parts: list[str], b_parts: list[str]) -> int:
@@ -1420,6 +2030,121 @@ def associate_pdfs(series_name: str, source_paths: list[str], manifest_rows: lis
     return matches
 
 
+def _candidate_local_paths(url: str, filename: str, doc_root: str | Path) -> list[Path]:
+    root = Path(doc_root)
+    parsed = urlparse(url)
+    path = Path(parsed.path.lstrip('/')) if parsed.path else None
+    candidates = [root / filename]
+    if path is not None:
+        candidates.append(root / path)
+        candidates.append(root / path.name)
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            out.append(candidate)
+    return out
+
+
+def _extract_pdf_text(path: Path, *, max_chars: int) -> tuple[str | None, str]:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+        except ImportError:
+            return None, 'pdf_parser_unavailable'
+    try:
+        reader = PdfReader(str(path))
+        chunks: list[str] = []
+        for page in reader.pages[:3]:
+            chunks.append((page.extract_text() or '').strip())
+        text = '\n'.join(chunk for chunk in chunks if chunk).strip()
+        return (text[:max_chars] if text else None), ('ok' if text else 'empty')
+    except Exception:
+        return None, 'extract_failed'
+
+
+def extract_document_excerpt(path: str | Path, *, max_chars: int = 4000) -> tuple[str | None, str, str | None]:
+    target = Path(path)
+    suffix = target.suffix.lower()
+    if suffix in {'.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm'}:
+        try:
+            text = target.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            text = target.read_text(encoding='latin1', errors='ignore')
+        text = text.strip()
+        return (text[:max_chars] if text else None), ('ok' if text else 'empty'), suffix.lstrip('.')
+    if suffix == '.pdf':
+        excerpt, status = _extract_pdf_text(target, max_chars=max_chars)
+        return excerpt, status, 'pdf'
+    return None, 'unsupported_format', suffix.lstrip('.') or None
+
+
+def _doc_cache_path(path: str | Path, *, max_chars: int) -> Path:
+    target = Path(path)
+    file_hash = sha256_file(target)
+    preferred_root = get_settings().data_root / 'cache' / 'datasus_doc_excerpts'
+    try:
+        cache_root = ensure_directory(preferred_root)
+    except OSError:
+        cache_root = ensure_directory(Path(tempfile.gettempdir()) / 'pegasus_data' / 'datasus_doc_excerpts')
+    return cache_root / f'{file_hash}_{max_chars}.json'
+
+
+def extract_document_excerpt_cached(path: str | Path, *, max_chars: int = 4000) -> tuple[str | None, str, str | None]:
+    cache_path = _doc_cache_path(path, max_chars=max_chars)
+    if cache_path.exists():
+        payload = json.loads(cache_path.read_text(encoding='utf-8'))
+        return payload.get('excerpt'), str(payload.get('status') or 'unknown'), payload.get('content_type')
+    excerpt, status, content_type = extract_document_excerpt(path, max_chars=max_chars)
+    cache_path.write_text(
+        json.dumps({
+            'excerpt': excerpt,
+            'status': status,
+            'content_type': content_type,
+        }, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    return excerpt, status, content_type
+
+
+def build_family_document_registry(
+    families: list[dict[str, Any]],
+    *,
+    doc_root: str | Path,
+    max_chars: int = 4000,
+) -> list[FamilyDocumentEntry]:
+    out: list[FamilyDocumentEntry] = []
+    for family in families:
+        family_id = str(family.get('family_id') or '')
+        for doc in family.get('associated_docs') or []:
+            url = str(doc.get('url') or '')
+            filename = str(doc.get('filename') or Path(urlparse(url).path).name or '')
+            local_path = None
+            excerpt = None
+            status = 'missing_local_copy'
+            content_type = None
+            for candidate in _candidate_local_paths(url, filename, doc_root):
+                if candidate.exists():
+                    local_path = str(candidate)
+                    excerpt, status, content_type = extract_document_excerpt_cached(candidate, max_chars=max_chars)
+                    break
+            out.append(FamilyDocumentEntry(
+                family_id=family_id,
+                url=url,
+                filename=filename,
+                score=float(doc['score']) if doc.get('score') is not None else None,
+                local_path=local_path,
+                extraction_status=status,
+                content_type=content_type,
+                excerpt=excerpt,
+            ))
+    return out
+
+
 
 ###############################################################################
 ### FILE: pegasus_data/datasus/discovery/heuristics.py
@@ -1429,8 +2154,11 @@ from __future__ import annotations
 import datetime as dt
 import re
 from pathlib import PurePosixPath
+from typing import Any
 
-DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".zip", ".gz"}
+STRUCTURED_DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".json"}
+WRAPPER_EXTENSIONS = {".zip", ".gz"}
+DATA_EXTENSIONS = STRUCTURED_DATA_EXTENSIONS | WRAPPER_EXTENSIONS
 PDF_KEYWORDS = {"manual", "dicionario", "leia-me", "layout", "estrutura", "dic_dados", "instrucoes"}
 AUXILIARY_PATH_KEYWORDS = {"TABELAS", "DOCS", "DOCUMENTOS", "TABWIN", "DOC"}
 EXCLUSION_PATH_KEYWORDS = {"/IBGE/"}
@@ -1465,7 +2193,97 @@ def classify_path_type(path: str) -> str:
 
 def split_path(path: str) -> tuple[str, str, str]:
     p = PurePosixPath(path)
-    return str(p.parent), p.name, p.suffix.lower()
+    return str(p.parent), p.name, infer_extension_chain(path)
+
+
+def suffix_chain(path: str) -> list[str]:
+    return [suffix.lower() for suffix in PurePosixPath(path).suffixes]
+
+
+def infer_extension_chain(path: str) -> str:
+    suffixes = suffix_chain(path)
+    return ''.join(suffixes) if suffixes else ''
+
+
+def strip_all_suffixes(name: str) -> str:
+    pure = PurePosixPath(name)
+    base = pure.name
+    for suffix in reversed(pure.suffixes):
+        if base.lower().endswith(suffix.lower()):
+            base = base[: -len(suffix)]
+    return base
+
+
+def infer_primary_extension(path: str) -> str | None:
+    suffixes = suffix_chain(path)
+    for suffix in reversed(suffixes):
+        if suffix in STRUCTURED_DATA_EXTENSIONS:
+            return suffix
+    upper_path = path.upper()
+    if '/JSON/' in upper_path:
+        return '.json'
+    if '/XML/' in upper_path:
+        return '.xml'
+    if '/CSV/' in upper_path:
+        return '.csv'
+    if suffixes:
+        return suffixes[-1]
+    return None
+
+
+def infer_format_family(path: str) -> str:
+    primary = infer_primary_extension(path)
+    if primary in {'.dbf', '.dbc'}:
+        return 'dbase'
+    if primary == '.json':
+        return 'json'
+    if primary == '.xml':
+        return 'xml'
+    if primary == '.csv':
+        return 'csv'
+    if any(suffix in WRAPPER_EXTENSIONS for suffix in suffix_chain(path)):
+        return 'archive'
+    return 'unknown'
+
+
+def is_probably_structured_data(path: str) -> bool:
+    primary = infer_primary_extension(path)
+    return primary in STRUCTURED_DATA_EXTENSIONS or infer_format_family(path) == 'archive'
+
+
+def infer_inner_candidate_name(path: str) -> str:
+    return strip_all_suffixes(PurePosixPath(path).name)
+
+
+def infer_pattern_components(path: str) -> dict[str, Any]:
+    filename = PurePosixPath(path).name
+    stem = infer_inner_candidate_name(filename)
+    extension = infer_extension_chain(path)
+    primary_extension = infer_primary_extension(path)
+    format_family = infer_format_family(path)
+    pattern_name = None
+    series_prefix = None
+    geo_code = None
+    date_code = None
+    for candidate_name, pattern in PATTERNS.items():
+        match = pattern.match(stem)
+        if match:
+            pattern_name = candidate_name
+            series_prefix = match.group(1).upper()
+            geo_code = match.group(2).upper()
+            date_code = match.group(3)
+            break
+    return {
+        'filename': filename,
+        'stem': stem,
+        'extension': extension,
+        'primary_extension': primary_extension,
+        'format_family': format_family,
+        'pattern_name': pattern_name,
+        'series_prefix': series_prefix,
+        'geo_code': geo_code,
+        'date_code': date_code,
+    }
 
 
 def infer_system_guess(directory: str) -> str | None:
@@ -1539,11 +2357,10 @@ def classify_path_semantic(path: str, *, global_max_date: int, path_max_date: in
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 from ...common.io import read_jsonl, read_text_lines, write_jsonl
-from .heuristics import DATA_EXTENSIONS, PATTERNS, classify_path_type, is_excluded_path
+from .heuristics import classify_path_type, infer_pattern_components, is_excluded_path, is_probably_structured_data
 
 
 @dataclass(frozen=True)
@@ -1553,6 +2370,8 @@ class ManifestEntry:
     directory: str
     filename: str
     extension: str
+    primary_extension: str | None
+    format_family: str
     path_components: list[str]
     source: str
     scan_id: str | None
@@ -1583,31 +2402,28 @@ def parse_manifest_line(raw: str, *, scan_id: str | None = None, source: str = "
     url, path = _parse_url_or_path(raw)
     if is_excluded_path(path):
         return None
-    pure = PurePosixPath(path)
-    directory = str(pure.parent)
-    filename = pure.name
-    extension = pure.suffix.lower()
-    stem = pure.stem
+    parsed = infer_pattern_components(path)
+    directory = path.rsplit('/', 1)[0] if '/' in path else ''
+    filename = str(parsed['filename'])
+    extension = str(parsed['extension'])
     path_type = classify_path_type(path)
     pattern_name = None
     series_prefix = None
     geo_code = None
     date_code = None
-    if extension in DATA_EXTENSIONS and path_type == "Primary":
-        for candidate_name, pattern in PATTERNS.items():
-            match = pattern.match(stem)
-            if match:
-                pattern_name = candidate_name
-                series_prefix = match.group(1).upper()
-                geo_code = match.group(2).upper()
-                date_code = match.group(3)
-                break
+    if path_type == "Primary" and is_probably_structured_data(path):
+        pattern_name = parsed['pattern_name']
+        series_prefix = parsed['series_prefix']
+        geo_code = parsed['geo_code']
+        date_code = parsed['date_code']
     return ManifestEntry(
         path=path,
         url=url,
         directory=directory,
         filename=filename,
         extension=extension,
+        primary_extension=parsed['primary_extension'],
+        format_family=str(parsed['format_family']),
         path_components=[part for part in directory.split("/") if part],
         source=source,
         scan_id=scan_id,
@@ -1630,7 +2446,12 @@ def parse_manifest_text(path: str, *, scan_id: str | None = None) -> list[Manife
 
 
 def read_manifest_jsonl(path: str) -> list[ManifestEntry]:
-    return [ManifestEntry(**row) for row in read_jsonl(path)]
+    out: list[ManifestEntry] = []
+    for row in read_jsonl(path):
+        row.setdefault('primary_extension', None)
+        row.setdefault('format_family', 'unknown')
+        out.append(ManifestEntry(**row))
+    return out
 
 
 def write_manifest_jsonl(path: str, entries: list[ManifestEntry]) -> None:
@@ -1834,10 +2655,17 @@ class DatasusFtpScanner:
 ###############################################################################
 ### FILE: pegasus_data/datasus/fetch/__init__.py
 ###############################################################################
-from .planner import plan_datasus_downloads
-from .downloader import download_manifest_entries
+from .planner import DatasusDownloadPlan, plan_family_candidate_downloads
+from .downloader import download_plans
+from .selectors import FamilyCandidateSelection, select_family_candidates
 
-__all__ = ["plan_datasus_downloads", "download_manifest_entries"]
+__all__ = [
+    "DatasusDownloadPlan",
+    "FamilyCandidateSelection",
+    "select_family_candidates",
+    "plan_family_candidate_downloads",
+    "download_plans",
+]
 
 
 
@@ -1863,42 +2691,73 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _download_one(plan: DatasusDownloadPlan) -> dict:
+def _existing_metadata(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _finalize_metadata(plan: DatasusDownloadPlan, *, local_path: Path, status: str) -> dict:
+    metadata = {
+        **asdict(plan),
+        'local_path': str(local_path),
+        'source': 'datasus_ftp',
+        'downloaded_at': _now(),
+        'size_bytes': local_path.stat().st_size,
+        'sha256': sha256_file(local_path),
+        'transport': 'ftp',
+        'status': status,
+    }
+    metadata_path = ensure_parent(plan.metadata_path)
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
+    return metadata
+
+
+def _download_one(plan: DatasusDownloadPlan, *, overwrite: bool = False, dry_run: bool = False) -> dict:
+    target = Path(plan.target_path)
+    if dry_run:
+        return {
+            **asdict(plan),
+            'local_path': str(target),
+            'status': 'planned',
+        }
+    if target.exists() and not overwrite:
+        existing = _existing_metadata(Path(plan.metadata_path))
+        if existing is not None:
+            existing['status'] = 'cached'
+            return existing
+        return _finalize_metadata(plan, local_path=target, status='cached')
+
     settings = get_settings()
-    target = ensure_parent(plan.target_path)
+    ensure_parent(target)
+    temp_path = target.with_suffix(target.suffix + '.part')
     parsed = urlparse(plan.source_url)
     host = parsed.hostname or settings.datasus_ftp_host
-    path = parsed.path
     ftp = ftplib.FTP(host, timeout=settings.datasus_download_timeout_seconds)
     ftp.login()
     ftp.set_pasv(True)
     try:
-        with target.open("wb") as handle:
-            ftp.retrbinary(f"RETR {path}", handle.write)
+        with temp_path.open('wb') as handle:
+            ftp.retrbinary(f"RETR {parsed.path}", handle.write)
     finally:
         try:
             ftp.quit()
         except Exception:
             ftp.close()
-    metadata = {
-        **asdict(plan),
-        "source": "datasus_ftp",
-        "downloaded_at": _now(),
-        "size_bytes": target.stat().st_size,
-        "sha256": sha256_file(target),
-        "transport": "ftp",
-        "listing_method": "manifest",
-        "etag": None,
-        "notes": [],
-    }
-    metadata_path = ensure_parent(plan.metadata_path)
-    with metadata_path.open("w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, ensure_ascii=False, indent=2)
-    return metadata
+    temp_path.replace(target)
+    return _finalize_metadata(plan, local_path=target, status='downloaded')
 
 
-def download_manifest_entries(plans: list[DatasusDownloadPlan]) -> list[dict]:
-    return [_download_one(plan) for plan in plans]
+def download_plans(
+    plans: list[DatasusDownloadPlan],
+    *,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> list[dict]:
+    return [_download_one(plan, overwrite=overwrite, dry_run=dry_run) for plan in plans]
 
 
 
@@ -1907,58 +2766,89 @@ def download_manifest_entries(plans: list[DatasusDownloadPlan]) -> list[dict]:
 ###############################################################################
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import PurePosixPath
+from dataclasses import asdict, dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+from urllib.parse import urlparse
 
-from ..discovery.manifest import ManifestEntry
-from ..discovery.heuristics import infer_system_guess
+from ...config import get_settings
 
 
 @dataclass(frozen=True)
 class DatasusDownloadPlan:
+    asset_kind: str
+    family_id: str
+    selection_rank: int
+    selection_reason: str
     source_url: str
+    source_path: str
+    filename: str
     target_path: str
     metadata_path: str
-    system: str | None
-    prefix: str | None
     geo_code: str | None
     date_code: str | None
 
-
-def _infer_year(date_code: str | None) -> str:
-    if not date_code:
-        return "unknown"
-    if len(date_code) == 2:
-        return f"20{date_code}" if int(date_code) < 70 else f"19{date_code}"
-    if len(date_code) == 4 and int(date_code[:2]) in range(19, 21):
-        return date_code
-    if len(date_code) == 4:
-        yy = int(date_code[:2])
-        return str(2000 + yy if yy < 70 else 1900 + yy)
-    return date_code[:4]
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
-def plan_datasus_downloads(entries: list[ManifestEntry], *, scan_id: str, root: str = "data/raw/datasus/ftp") -> list[DatasusDownloadPlan]:
+def _asset_root(root: str | Path | None, *, asset_kind: str) -> Path:
+    if root is not None:
+        return Path(root)
+    settings = get_settings()
+    return settings.data_root / 'raw' / 'datasus' / ('docs' if asset_kind == 'doc' else 'candidates')
+
+
+def _plan_target_path(source_path: str, *, root: Path) -> Path:
+    parsed_path = PurePosixPath(source_path)
+    relative = Path(*[part for part in parsed_path.parts if part not in {'/'}])
+    return root / relative
+
+
+def _normalize_asset_entry(entry: dict[str, Any], *, asset_kind: str) -> dict[str, Any]:
+    source_url = str(entry.get('source_url') or entry.get('url') or '')
+    source_path = str(entry.get('source_path') or urlparse(source_url).path or '')
+    return {
+        'asset_kind': asset_kind,
+        'selection_rank': int(entry.get('selection_rank') or 0),
+        'selection_reason': str(entry.get('selection_reason') or ''),
+        'source_url': source_url,
+        'source_path': source_path,
+        'filename': str(entry.get('filename') or PurePosixPath(source_path).name),
+        'geo_code': entry.get('geo_code'),
+        'date_code': entry.get('date_code'),
+    }
+
+
+def plan_family_candidate_downloads(
+    selection: dict[str, Any],
+    *,
+    asset_kind: str,
+    root: str | Path | None = None,
+) -> list[DatasusDownloadPlan]:
+    if asset_kind not in {'data', 'doc'}:
+        raise ValueError(f'unsupported asset kind: {asset_kind}')
+    family_id = str(selection.get('family_id') or '')
+    entries = selection.get('selected_data_files' if asset_kind == 'data' else 'selected_docs') or []
+    asset_root = _asset_root(root, asset_kind=asset_kind)
     out: list[DatasusDownloadPlan] = []
     for entry in entries:
-        if entry.extension == ".pdf":
-            continue
-        system = infer_system_guess(entry.directory)
-        prefix = entry.series_prefix or "unknown"
-        geo = entry.geo_code or "unknown"
-        year = _infer_year(entry.date_code)
-        rel = PurePosixPath(root) / f"scan_id={scan_id}" / f"system={system or 'UNKNOWN'}" / f"prefix={prefix}" / f"geo={geo}" / f"year={year}" / entry.filename
-        out.append(
-            DatasusDownloadPlan(
-                source_url=entry.url,
-                target_path=str(rel),
-                metadata_path=str(rel) + ".metadata.json",
-                system=system,
-                prefix=entry.series_prefix,
-                geo_code=entry.geo_code,
-                date_code=entry.date_code,
-            )
-        )
+        normalized = _normalize_asset_entry(dict(entry), asset_kind=asset_kind)
+        source_path = normalized['source_path']
+        target = _plan_target_path(source_path, root=asset_root)
+        out.append(DatasusDownloadPlan(
+            asset_kind=asset_kind,
+            family_id=family_id,
+            selection_rank=normalized['selection_rank'],
+            selection_reason=normalized['selection_reason'],
+            source_url=normalized['source_url'],
+            source_path=source_path,
+            filename=normalized['filename'],
+            target_path=str(target),
+            metadata_path=str(target) + '.metadata.json',
+            geo_code=normalized['geo_code'],
+            date_code=normalized['date_code'],
+        ))
     return out
 
 
@@ -2016,9 +2906,11 @@ import queue
 import re
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
+from ...common.logging import get_logger
 from ...common.storage import ensure_parent
 from ...config import get_settings
 from .state import ScanState
@@ -2028,6 +2920,7 @@ _LIST_UNIX = re.compile(
     r'(?P<size>\d+)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+'
     r'(?P<timeyear>[\d:]{4,5})\s+(?P<name>.+)$'
 )
+_LOG = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -2051,7 +2944,7 @@ class DatasusFtpScanner:
     def __init__(self, *, host: str | None = None, base_path: str | None = None, connections: int | None = None) -> None:
         settings = get_settings()
         self.host = host or settings.datasus_ftp_host
-        self.base_path = base_path or settings.datasus_ftp_base_path
+        self.base_path = self._normalize_path(base_path or settings.datasus_ftp_base_path)
         self.connections = connections or settings.datasus_scan_connections
         self.timeout = settings.datasus_scan_timeout_seconds
 
@@ -2061,85 +2954,190 @@ class DatasusFtpScanner:
         ftp.set_pasv(True)
         return ftp
 
+    def _normalize_path(self, path: str) -> str:
+        pure = PurePosixPath(path or '/')
+        normalized = str(pure)
+        return normalized if normalized.startswith('/') else f'/{normalized}'
+
+    def _directory_variants(self, directory: str) -> list[str]:
+        normalized = self._normalize_path(directory)
+        variants = [normalized]
+        relative = normalized.lstrip('/')
+        if relative:
+            variants.append(relative)
+        return variants
+
+    def _join_child(self, directory: str, child: str) -> str:
+        if child.startswith('/'):
+            return self._normalize_path(child)
+        return self._normalize_path(str(PurePosixPath(self._normalize_path(directory)) / child))
+
+    @contextmanager
+    def _cwd(self, ftp: ftplib.FTP, directory: str):
+        original = ftp.pwd()
+        ftp.cwd(directory)
+        try:
+            yield
+        finally:
+            ftp.cwd(original)
+
     def _mlsd_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
-        rows = []
-        for name, facts in ftp.mlsd(directory):
-            entry_type = facts.get('type')
-            if entry_type in {'cdir', 'pdir'}:
-                continue
-            rows.append(ScanEntry(
-                parent_directory=directory,
-                child_name=name,
-                full_path=str(PurePosixPath(directory) / name),
-                entry_type=entry_type,
-                size=int(facts['size']) if facts.get('size', '').isdigit() else None,
-                modified=facts.get('modify'),
-                listing_method='MLSD',
-                scan_timestamp=time.time(),
-                worker_id=-1,
-                error_flags=[],
-            ))
-        return rows
+        errors: list[str] = []
+        for candidate in self._directory_variants(directory):
+            for mode in ('direct', 'cwd'):
+                try:
+                    if mode == 'direct':
+                        listing = ftp.mlsd(candidate)
+                    else:
+                        with self._cwd(ftp, candidate):
+                            listing = ftp.mlsd()
+                    rows: list[ScanEntry] = []
+                    for name, facts in listing:
+                        entry_type = facts.get('type')
+                        if entry_type in {'cdir', 'pdir'}:
+                            continue
+                        rows.append(ScanEntry(
+                            parent_directory=self._normalize_path(directory),
+                            child_name=name,
+                            full_path=self._join_child(directory, name),
+                            entry_type=entry_type,
+                            size=int(facts['size']) if facts.get('size', '').isdigit() else None,
+                            modified=facts.get('modify'),
+                            listing_method=f'MLSD:{mode}',
+                            scan_timestamp=time.time(),
+                            worker_id=-1,
+                            error_flags=[],
+                        ))
+                    if rows:
+                        return rows
+                    errors.append(f'{candidate}/{mode}: empty result')
+                except Exception as exc:
+                    errors.append(f'{candidate}/{mode}: {exc}')
+        raise RuntimeError('MLSD failed: ' + '; '.join(errors))
 
     def _list_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
-        raw_lines: list[str] = []
-        ftp.retrlines(f'LIST {directory}', raw_lines.append)
-        rows: list[ScanEntry] = []
-        for line in raw_lines:
-            match = _LIST_UNIX.match(line)
-            if not match:
-                continue
-            name = match.group('name')
-            rows.append(ScanEntry(
-                parent_directory=directory,
-                child_name=name,
-                full_path=str(PurePosixPath(directory) / name),
-                entry_type='dir' if match.group('mode').startswith('d') else 'file',
-                size=int(match.group('size')),
-                modified=None,
-                listing_method='LIST',
-                scan_timestamp=time.time(),
-                worker_id=-1,
-                error_flags=[],
-            ))
-        return rows
+        errors: list[str] = []
+        for candidate in self._directory_variants(directory):
+            for command, mode in ((f'LIST {candidate}', 'direct'), ('LIST', 'cwd')):
+                raw_lines: list[str] = []
+                try:
+                    if mode == 'cwd':
+                        with self._cwd(ftp, candidate):
+                            ftp.retrlines(command, raw_lines.append)
+                    else:
+                        ftp.retrlines(command, raw_lines.append)
+                    rows: list[ScanEntry] = []
+                    parsed_any = False
+                    for line in raw_lines:
+                        match = _LIST_UNIX.match(line)
+                        if not match:
+                            continue
+                        parsed_any = True
+                        name = match.group('name')
+                        rows.append(ScanEntry(
+                            parent_directory=self._normalize_path(directory),
+                            child_name=name,
+                            full_path=self._join_child(directory, name),
+                            entry_type='dir' if match.group('mode').startswith('d') else 'file',
+                            size=int(match.group('size')),
+                            modified=None,
+                            listing_method=f'LIST:{mode}',
+                            scan_timestamp=time.time(),
+                            worker_id=-1,
+                            error_flags=[],
+                        ))
+                    if rows:
+                        return rows
+                    if raw_lines and not parsed_any:
+                        errors.append(f'{candidate}/{mode}: unparseable LIST rows')
+                    else:
+                        errors.append(f'{candidate}/{mode}: empty result')
+                except Exception as exc:
+                    errors.append(f'{candidate}/{mode}: {exc}')
+        raise RuntimeError('LIST failed: ' + '; '.join(errors))
+
+    def _probe_entry_type(self, ftp: ftplib.FTP, full_path: str) -> str | None:
+        original = ftp.pwd()
+        try:
+            ftp.cwd(full_path)
+            return 'dir'
+        except Exception:
+            return 'file'
+        finally:
+            try:
+                ftp.cwd(original)
+            except Exception:
+                pass
 
     def _nlst_entries(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
-        rows = []
-        for child in ftp.nlst(directory):
-            pure = PurePosixPath(child)
-            rows.append(ScanEntry(
-                parent_directory=str(pure.parent),
-                child_name=pure.name,
-                full_path=str(pure),
-                entry_type=None,
-                size=None,
-                modified=None,
-                listing_method='NLST',
-                scan_timestamp=time.time(),
-                worker_id=-1,
-                error_flags=['unknown_entry_type'],
-            ))
-        return rows
+        errors: list[str] = []
+        for candidate in self._directory_variants(directory):
+            for mode in ('direct', 'cwd'):
+                try:
+                    if mode == 'direct':
+                        children = ftp.nlst(candidate)
+                    else:
+                        with self._cwd(ftp, candidate):
+                            children = ftp.nlst()
+                    rows: list[ScanEntry] = []
+                    for child in children:
+                        name = PurePosixPath(child).name if '/' in child else child
+                        if name in {'.', '..'}:
+                            continue
+                        full_path = self._join_child(directory, child)
+                        rows.append(ScanEntry(
+                            parent_directory=self._normalize_path(directory),
+                            child_name=name,
+                            full_path=full_path,
+                            entry_type=self._probe_entry_type(ftp, full_path),
+                            size=None,
+                            modified=None,
+                            listing_method=f'NLST:{mode}',
+                            scan_timestamp=time.time(),
+                            worker_id=-1,
+                            error_flags=['entry_type_probed'],
+                        ))
+                    if rows:
+                        return rows
+                    errors.append(f'{candidate}/{mode}: empty result')
+                except Exception as exc:
+                    errors.append(f'{candidate}/{mode}: {exc}')
+        raise RuntimeError('NLST failed: ' + '; '.join(errors))
 
     def _list_directory(self, ftp: ftplib.FTP, directory: str) -> list[ScanEntry]:
+        errors: list[str] = []
         for method in (self._mlsd_entries, self._list_entries, self._nlst_entries):
             try:
-                return method(ftp, directory)
-            except Exception:
+                rows = method(ftp, directory)
+            except Exception as exc:
+                errors.append(f'{method.__name__}: {exc}')
                 continue
-        raise RuntimeError(f'Could not list directory: {directory}')
+            if rows:
+                return rows
+            errors.append(f'{method.__name__}: empty result')
+        raise RuntimeError(f'Could not list directory: {directory} ({"; ".join(errors)})')
+
+    def _load_or_initialize_state(self, checkpoint: Path | None) -> ScanState:
+        if checkpoint and checkpoint.exists():
+            state = ScanState.from_file(checkpoint)
+            if not state.pending_dirs and state.entries_written == 0:
+                _LOG.warning(
+                    'checkpoint %s has zero entries and no pending directories; restarting scan from %s',
+                    checkpoint,
+                    self.base_path,
+                )
+                return ScanState(pending_dirs=[self.base_path])
+            return state
+        return ScanState(pending_dirs=[self.base_path])
 
     def scan_to_jsonl(self, *, output_path: str, checkpoint_path: str | None = None, append: bool = True) -> ScanState:
         stop_token = object()
         out = ensure_parent(output_path)
         checkpoint = Path(checkpoint_path) if checkpoint_path else None
-        state = ScanState.from_file(checkpoint) if checkpoint and checkpoint.exists() else ScanState(
-            pending_dirs=[self.base_path],
-        )
+        state = self._load_or_initialize_state(checkpoint)
         pending: queue.Queue[object] = queue.Queue()
         for item in state.pending_dirs or [self.base_path]:
-            pending.put(item)
+            pending.put(self._normalize_path(str(item)))
         visited_lock = threading.Lock()
         output_lock = threading.Lock()
         state_lock = threading.Lock()
@@ -2176,11 +3174,12 @@ class DatasusFtpScanner:
                     try:
                         rows = self._list_directory(ftp, directory)
                     except Exception as exc:
+                        _LOG.warning('scan listing failed for %s: %s', directory, exc)
                         with state_lock:
                             state.errors.append({'directory': directory, 'worker_id': worker_id, 'error': str(exc)})
                         pending.task_done()
                         continue
-                    local_lines = []
+                    local_lines: list[str] = []
                     for row in rows:
                         enriched = ScanEntry(**{**row.to_dict(), 'worker_id': worker_id})
                         local_lines.append(json.dumps(enriched.to_dict(), ensure_ascii=False))
@@ -2209,6 +3208,14 @@ class DatasusFtpScanner:
             pending.put(stop_token)
         for thread in threads:
             thread.join()
+        if state.entries_written == 0:
+            warning = {
+                'directory': self.base_path,
+                'worker_id': -1,
+                'error': 'scan completed with zero entries; FTP listing likely failed or returned empty results',
+            }
+            _LOG.warning('%s', warning['error'])
+            state.errors.append(warning)
         flush_state()
         return state
 
@@ -2291,6 +3298,7 @@ from ..discovery.heuristics import (
     classify_path_semantic,
     format_normalized_date,
     infer_date_format,
+    infer_inner_candidate_name,
     normalize_datecode,
 )
 from .files import InventoryFile
@@ -2303,8 +3311,10 @@ class DatasetFamily:
     series_prefix: str | None
     partition_type: str
     date_format: str | None
+    time_range: str | None
     time_range_display: str | None
     file_count: int
+    member_files: list[str]
     files: list[str]
     source_paths: list[str]
     geo_coverage: list[str]
@@ -2322,7 +3332,7 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
     for item in files:
         if item.path_type != 'Primary':
             continue
-        key = (item.system_guess, item.series_prefix or Path(item.filename).stem)
+        key = (item.system_guess, item.series_prefix or infer_inner_candidate_name(item.filename))
         by_key[key].append(item)
 
     out: list[DatasetFamily] = []
@@ -2349,7 +3359,7 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
             type('ManifestLike', (), {'path': f.path, 'url': f'ftp://ftp.datasus.gov.br{f.path}', 'directory': f.directory, 'filename': f.filename, 'extension': f.extension, 'path_components': [p for p in f.directory.split('/') if p], 'source': 'datasus_ftp', 'scan_id': None, 'path_type': f.path_type, 'pattern_name': f.pattern_name, 'series_prefix': f.series_prefix, 'geo_code': f.geo_code, 'date_code': f.date_code, 'raw_listing_facts': None})
             for f in files
         ])]
-        family_id = f"{system_guess or 'UNKNOWN'}:{prefix or Path(rows[0].filename).stem}"
+        family_id = f"{system_guess or 'UNKNOWN'}:{prefix or infer_inner_candidate_name(rows[0].filename)}"
         if signatures:
             family_id += f":s{len(signatures)}"
         out.append(DatasetFamily(
@@ -2358,8 +3368,10 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
             series_prefix=prefix,
             partition_type=partition,
             date_format=date_format,
+            time_range=time_range_display,
             time_range_display=time_range_display,
             file_count=len(rows),
+            member_files=files_for_family,
             files=files_for_family,
             source_paths=sorted({row.directory for row in rows}),
             geo_coverage=geo_coverage,
@@ -2377,10 +3389,9 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from pathlib import PurePosixPath
 
 from ...common.io import read_jsonl
-from ..discovery.heuristics import classify_path_type, infer_system_guess, is_excluded_path, PATTERNS
+from ..discovery.heuristics import classify_path_type, infer_pattern_components, infer_system_guess, is_excluded_path
 
 
 @dataclass(frozen=True)
@@ -2389,6 +3400,8 @@ class InventoryFile:
     directory: str
     filename: str
     extension: str
+    primary_extension: str | None
+    format_family: str
     system_guess: str | None
     path_type: str
     series_prefix: str | None
@@ -2406,29 +3419,96 @@ def inventory_from_scan_jsonl(path: str) -> list[InventoryFile]:
         full_path = row['full_path']
         if row.get('entry_type') == 'dir' or is_excluded_path(full_path):
             continue
-        pure = PurePosixPath(full_path)
-        extension = pure.suffix.lower()
-        stem = pure.stem
-        pattern_name = prefix = geo = date = None
-        for candidate_name, pattern in PATTERNS.items():
-            match = pattern.match(stem)
-            if match:
-                pattern_name = candidate_name
-                prefix = match.group(1).upper()
-                geo = match.group(2).upper()
-                date = match.group(3)
-                break
+        parsed = infer_pattern_components(full_path)
+        directory = full_path.rsplit('/', 1)[0] if '/' in full_path else ''
         out.append(InventoryFile(
             path=full_path,
-            directory=str(pure.parent),
-            filename=pure.name,
-            extension=extension,
-            system_guess=infer_system_guess(str(pure.parent)),
+            directory=directory,
+            filename=str(parsed['filename']),
+            extension=str(parsed['extension']),
+            primary_extension=parsed['primary_extension'],
+            format_family=str(parsed['format_family']),
+            system_guess=infer_system_guess(directory),
             path_type=classify_path_type(full_path),
-            series_prefix=prefix,
-            geo_code=geo,
-            date_code=date,
-            pattern_name=pattern_name,
+            series_prefix=parsed['series_prefix'],
+            geo_code=parsed['geo_code'],
+            date_code=parsed['date_code'],
+            pattern_name=parsed['pattern_name'],
+        ))
+    return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/inventory/registry.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class FamilyRegistryEntry:
+    family_id: str
+    system_guess: str | None
+    series_prefix: str | None
+    partition_type: str
+    date_format: str | None
+    time_range: str | None
+    time_range_display: str | None
+    file_count: int
+    member_files: list[str]
+    source_paths: list[str]
+    geo_coverage: list[str]
+    path_semantics: dict[str, str]
+    schema_signatures: list[str]
+    variable_count: int
+    variables: list[str]
+    associated_docs: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def build_family_registry(
+    families: list[dict[str, Any]],
+    profile_rows: list[dict[str, Any]] | None = None,
+) -> list[FamilyRegistryEntry]:
+    profile_rows = profile_rows or []
+    variables_by_path: dict[str, set[str]] = {}
+    for row in profile_rows:
+        path = str(row.get('source_path') or row.get('path') or '')
+        field_names = {
+            str(field.get('name') or '').upper()
+            for field in row.get('field_profiles') or []
+            if str(field.get('name') or '').strip()
+        }
+        variables_by_path[path] = field_names
+
+    out: list[FamilyRegistryEntry] = []
+    for family in families:
+        paths = [str(path) for path in family.get('member_files', family.get('files', [])) or []]
+        family_vars: set[str] = set()
+        for path in paths:
+            family_vars.update(variables_by_path.get(path, set()))
+        out.append(FamilyRegistryEntry(
+            family_id=str(family.get('family_id') or ''),
+            system_guess=family.get('system_guess'),
+            series_prefix=family.get('series_prefix'),
+            partition_type=str(family.get('partition_type') or 'Unknown'),
+            date_format=family.get('date_format'),
+            time_range=family.get('time_range') or family.get('time_range_display'),
+            time_range_display=family.get('time_range_display'),
+            file_count=int(family.get('file_count') or 0),
+            member_files=paths,
+            source_paths=list(family.get('source_paths') or []),
+            geo_coverage=list(family.get('geo_coverage') or []),
+            path_semantics=dict(family.get('path_semantics') or {}),
+            schema_signatures=list(family.get('schema_signatures') or []),
+            variable_count=len(family_vars),
+            variables=sorted(family_vars),
+            associated_docs=list(family.get('associated_docs') or []),
         ))
     return out
 
@@ -2475,136 +3555,23 @@ class SourceNormalizedRow:
 
 
 ###############################################################################
-### FILE: pegasus_data/datasus/parsers/__init__.py
-###############################################################################
-from .base import DatasusParser
-from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
-from .generic import GenericDatasusDbaseParser
-
-__all__ = [
-    'DatasusParser',
-    'RawSourceRow',
-    'SourceFileMetadata',
-    'SourceNormalizedRow',
-    'GenericDatasusDbaseParser',
-]
-
-
-
-###############################################################################
-### FILE: pegasus_data/datasus/parsers/base.py
-###############################################################################
-from __future__ import annotations
-
-from abc import ABC, abstractmethod
-from typing import Iterator
-
-from ...pegasus.canonical.schema import CanonicalRecord
-from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
-
-
-class DatasusParser(ABC):
-    source_system: str = 'DATASUS_GENERIC'
-    dataset: str | None = None
-    schema_version: str = 'v1'
-
-    @abstractmethod
-    def detect_file(self, path: str) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    def load_metadata(self, path: str) -> SourceFileMetadata:
-        raise NotImplementedError
-
-    @abstractmethod
-    def iter_raw_rows(self, path: str) -> Iterator[RawSourceRow]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def normalize_raw_row(self, row: RawSourceRow) -> SourceNormalizedRow:
-        raise NotImplementedError
-
-    def iter_normalized_rows(self, path: str) -> Iterator[SourceNormalizedRow]:
-        for row in self.iter_raw_rows(path):
-            yield self.normalize_raw_row(row)
-
-    def to_canonical(self, row: SourceNormalizedRow) -> CanonicalRecord | None:
-        return None
-
-
-
-###############################################################################
-### FILE: pegasus_data/datasus/parsers/dbase.py
-###############################################################################
-from ..decode.dbase import DatasusDecodeError, dbc_as_temp_dbf, open_dbf, load_dbase_metadata, iter_dbase_rows
-
-__all__ = ['DatasusDecodeError', 'dbc_as_temp_dbf', 'open_dbf', 'load_dbase_metadata', 'iter_dbase_rows']
-
-
-
-###############################################################################
-### FILE: pegasus_data/datasus/parsers/generic.py
-###############################################################################
-from __future__ import annotations
-
-from pathlib import Path
-
-from ..decode.dbase import iter_dbase_rows, load_dbase_metadata
-from ..discovery.heuristics import infer_system_guess
-from .base import DatasusParser
-from ..models import RawSourceRow, SourceFileMetadata, SourceNormalizedRow
-
-
-class GenericDatasusDbaseParser(DatasusParser):
-    source_system = 'DATASUS_GENERIC'
-    schema_version = 'datasus_generic_v2'
-
-    def detect_file(self, path: str) -> bool:
-        return Path(path).suffix.lower() in {'.dbc', '.dbf'}
-
-    def load_metadata(self, path: str) -> SourceFileMetadata:
-        metadata = load_dbase_metadata(path)
-        return SourceFileMetadata(
-            source_system=infer_system_guess(str(Path(path).parent)) or self.source_system,
-            dataset=Path(path).stem,
-            path=metadata.path,
-            encoding=metadata.encoding,
-            file_format=metadata.file_format,
-            field_names=metadata.field_names,
-            schema_version=self.schema_version,
-        )
-
-    def iter_raw_rows(self, path: str):
-        yield from iter_dbase_rows(path)
-
-    def normalize_raw_row(self, row: RawSourceRow) -> SourceNormalizedRow:
-        return SourceNormalizedRow(
-            source=infer_system_guess(str(Path(row.raw_file).parent)) or self.source_system,
-            dataset=Path(row.raw_file).stem,
-            raw_file=row.raw_file,
-            row_number=row.row_number,
-            fields=row.fields,
-            parse_warnings=[],
-            encoding=None,
-            schema_version=self.schema_version,
-        )
-
-
-
-###############################################################################
 ### FILE: pegasus_data/datasus/profile/__init__.py
 ###############################################################################
 from .fields import FieldProfile, profile_field
-from .tables import TableProfile, profile_dbase_file
+from .similarity import build_family_similarity_report, build_variable_similarity_report
+from .tables import TableProfile, profile_dbase_file, profile_file
 from .variables import VariableCatalogEntry, build_variable_catalog
 
 __all__ = [
     'FieldProfile',
     'profile_field',
     'TableProfile',
+    'profile_file',
     'profile_dbase_file',
     'VariableCatalogEntry',
     'build_variable_catalog',
+    'build_family_similarity_report',
+    'build_variable_similarity_report',
 ]
 
 
@@ -2705,13 +3672,18 @@ def profile_field(name: str, values: Iterable[Any], *, sample_limit: int = 12) -
 ###############################################################################
 from __future__ import annotations
 
+import json
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from hashlib import sha1
 from pathlib import Path
+import tempfile
 from typing import Any
 
-from ..decode.dbase import iter_dbase_rows, load_dbase_metadata
+from ...common.hashing import sha256_file
+from ...common.storage import ensure_directory, ensure_parent
+from ...config import get_settings
+from ..decode.inspect import inspect_file
 from .fields import FieldProfile, profile_field
 
 
@@ -2723,6 +3695,10 @@ class TableProfile:
     field_names: list[str]
     schema_signature: str
     field_profiles: list[FieldProfile]
+    source_path: str | None = None
+    local_path: str | None = None
+    file_hash: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -2732,29 +3708,168 @@ class TableProfile:
             'field_names': self.field_names,
             'schema_signature': self.schema_signature,
             'field_profiles': [fp.to_dict() for fp in self.field_profiles],
+            'source_path': self.source_path,
+            'local_path': self.local_path,
+            'file_hash': self.file_hash,
+            'warnings': list(self.warnings),
         }
 
 
-def profile_dbase_file(path: str, *, sample_rows: int = 500) -> TableProfile:
-    metadata = load_dbase_metadata(path)
-    values_by_field: dict[str, list[Any]] = defaultdict(list)
-    sampled = 0
-    for row in iter_dbase_rows(path):
-        sampled += 1
-        for field_name in metadata.field_names:
-            values_by_field[field_name].append(row.fields.get(field_name))
-        if sampled >= sample_rows:
-            break
-    field_profiles = [profile_field(name, values_by_field.get(name, [])) for name in metadata.field_names]
-    schema_signature = sha1('|'.join(metadata.field_names).encode('utf-8')).hexdigest()[:16]
+def _cache_root() -> Path:
+    preferred_root = get_settings().data_root / 'cache' / 'datasus_profiles'
+    try:
+        return ensure_directory(preferred_root)
+    except OSError:
+        return ensure_directory(Path(tempfile.gettempdir()) / 'pegasus_data' / 'datasus_profiles')
+
+
+def _cache_path(path: str, *, file_hash: str, sample_rows: int) -> Path:
+    key = sha1(f'{Path(path).resolve()}|{file_hash}|{sample_rows}'.encode('utf-8')).hexdigest()
+    return _cache_root() / f'{key}.json'
+
+
+def _profile_from_payload(payload: dict[str, Any]) -> TableProfile:
     return TableProfile(
-        path=str(Path(path)),
-        file_format=metadata.file_format,
-        row_count_sampled=sampled,
-        field_names=metadata.field_names,
+        path=str(payload.get('path') or ''),
+        file_format=str(payload.get('file_format') or 'unknown'),
+        row_count_sampled=int(payload.get('row_count_sampled') or 0),
+        field_names=list(payload.get('field_names') or []),
+        schema_signature=str(payload.get('schema_signature') or ''),
+        field_profiles=[FieldProfile(**field) for field in payload.get('field_profiles') or []],
+        source_path=payload.get('source_path'),
+        local_path=payload.get('local_path'),
+        file_hash=payload.get('file_hash'),
+        warnings=list(payload.get('warnings') or []),
+    )
+
+
+def profile_file(
+    path: str,
+    *,
+    sample_rows: int = 500,
+    source_path: str | None = None,
+    local_path: str | None = None,
+) -> TableProfile:
+    local = Path(path)
+    file_hash = sha256_file(local)
+    cache_path = _cache_path(path, file_hash=file_hash, sample_rows=sample_rows)
+    if cache_path.exists():
+        payload = json.loads(cache_path.read_text(encoding='utf-8'))
+        return _profile_from_payload(payload)
+
+    preview = inspect_file(path, sample_rows=sample_rows, source_path=source_path)
+    values_by_field: dict[str, list[Any]] = defaultdict(list)
+    for row in preview.sample_rows:
+        for field_name in preview.field_names:
+            values_by_field[field_name].append(row.get(field_name))
+    field_profiles = [profile_field(name, values_by_field.get(name, [])) for name in preview.field_names]
+    schema_signature = sha1('|'.join(preview.field_names).encode('utf-8')).hexdigest()[:16]
+    profile = TableProfile(
+        path=str(local),
+        file_format=preview.file_format,
+        row_count_sampled=len(preview.sample_rows),
+        field_names=preview.field_names,
         schema_signature=schema_signature,
         field_profiles=field_profiles,
+        source_path=source_path or str(local),
+        local_path=local_path or str(local),
+        file_hash=file_hash,
+        warnings=list(preview.warnings),
     )
+    target = ensure_parent(cache_path)
+    target.write_text(json.dumps(profile.to_dict(), ensure_ascii=False, indent=2), encoding='utf-8')
+    return profile
+
+
+def profile_dbase_file(path: str, *, sample_rows: int = 500) -> TableProfile:
+    return profile_file(path, sample_rows=sample_rows)
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/profile/variables.py
+###############################################################################
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class VariableCatalogEntry:
+    variable: str
+    family_count: int
+    file_count: int
+    primitive_types: list[str]
+    scopes: list[str]
+    samples: list[str]
+    signals: list[str]
+    dataset_overrides: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _family_index(families: list[dict[str, Any]]) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for family in families:
+        family_id = str(family.get('family_id') or '')
+        for path in family.get('member_files', family.get('files', [])) or []:
+            out.setdefault(str(path), set()).add(family_id)
+    return out
+
+
+def build_variable_catalog(
+    profile_rows: list[dict[str, Any]],
+    *,
+    families: list[dict[str, Any]] | None = None,
+    sample_limit: int = 12,
+) -> list[VariableCatalogEntry]:
+    path_to_families = _family_index(families or [])
+    bucket: dict[str, dict[str, Any]] = {}
+
+    for row in profile_rows:
+        path = str(row.get('source_path') or row.get('path') or '')
+        families_for_path = path_to_families.get(path) or set()
+        for field in row.get('field_profiles') or []:
+            variable = str(field.get('name') or '').upper()
+            if not variable:
+                continue
+            slot = bucket.setdefault(variable, {
+                'file_paths': set(),
+                'family_ids': set(),
+                'primitive_types': Counter(),
+                'samples': Counter(),
+                'signals': Counter(),
+                'dataset_overrides': set(),
+            })
+            slot['file_paths'].add(path)
+            slot['family_ids'].update(families_for_path)
+            slot['primitive_types'][str(field.get('primitive_type') or 'unknown')] += 1
+            for sample in field.get('samples') or []:
+                text = str(sample).strip()
+                if text:
+                    slot['samples'][text] += 1
+            for signal in field.get('signals') or []:
+                slot['signals'][str(signal)] += 1
+            for family_id in families_for_path:
+                slot['dataset_overrides'].add(family_id)
+
+    out: list[VariableCatalogEntry] = []
+    for variable in sorted(bucket):
+        slot = bucket[variable]
+        out.append(VariableCatalogEntry(
+            variable=variable,
+            family_count=len(slot['family_ids']),
+            file_count=len(slot['file_paths']),
+            primitive_types=[name for name, _ in slot['primitive_types'].most_common()],
+            scopes=sorted(slot['family_ids']),
+            samples=[name for name, _ in slot['samples'].most_common(sample_limit)],
+            signals=[name for name, _ in slot['signals'].most_common()],
+            dataset_overrides=sorted(slot['dataset_overrides']),
+        ))
+    return out
 
 
 
@@ -2866,6 +3981,114 @@ def translate_row_fields(fields: dict[str, Any], registry: TranslationRegistry, 
         entry = registry.resolve(field_name, scope=scope)
         out[field_name] = _translate_scalar(value, entry)
     return out
+
+
+
+###############################################################################
+### FILE: pegasus_data/datasus/translate/bundle.py
+###############################################################################
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class TranslationBundle:
+    family_id: str
+    prompt_text: str
+    variables: list[dict[str, Any]]
+    docs: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def build_translation_bundle(
+    family: dict[str, Any],
+    profile_rows: list[dict[str, Any]],
+    variable_catalog: list[dict[str, Any]],
+    *,
+    document_registry: list[dict[str, Any]] | None = None,
+    max_fields: int = 120,
+) -> TranslationBundle:
+    profile_map = {
+        str(row.get('source_path') or row.get('path') or ''): row
+        for row in profile_rows
+    }
+    catalog_map = {str(row.get('variable') or '').upper(): row for row in variable_catalog}
+    variables: list[dict[str, Any]] = []
+    for path in family.get('member_files', family.get('files', [])) or []:
+        row = profile_map.get(str(path))
+        if not row:
+            continue
+        for field in row.get('field_profiles', []) or []:
+            name = str(field.get('name') or '').upper()
+            merged = dict(field)
+            if name in catalog_map:
+                merged['catalog'] = catalog_map[name]
+            merged['source_path'] = str(path)
+            merged['local_path'] = row.get('local_path')
+            variables.append(merged)
+
+    variables.sort(key=lambda item: (-(item.get('catalog') or {}).get('family_count', 0), str(item.get('name') or '')))
+    variables = variables[:max_fields]
+
+    lines: list[str] = [
+        'TASK: produce compact translation grammar blocks for this DATASUS dataset family.',
+        'OUTPUT ONLY grammar lines using directives: $, @, =, >, ~, %.',
+        'Prefer GLOBAL entries for shared variables. Use @ only for real family-specific overrides.',
+        'Kinds: cat date mun uf num txt code id flag unknown',
+        'Rules available: ibge6 ibge7 cid10 date8 date6 upper stripdigits',
+        '',
+        f'FAMILY {family.get("family_id")}',
+        f'SYSTEM {family.get("system_guess") or "UNKNOWN"}',
+        f'PREFIX {family.get("series_prefix") or "UNKNOWN"}',
+        f'FILES {family.get("file_count") or 0}',
+    ]
+    if family.get('time_range_display'):
+        lines.append(f'TIME {family.get("time_range_display")}')
+    lines.append('')
+    docs = family.get('associated_docs') or []
+    doc_context = [
+        row for row in (document_registry or [])
+        if str(row.get('family_id') or '') == str(family.get('family_id') or '')
+    ]
+    if docs:
+        lines.append('DOCS')
+        for doc in docs[:12]:
+            url = doc.get('url') or ''
+            score = doc.get('score')
+            lines.append(f'- {score} {url}'.rstrip())
+        lines.append('')
+    if doc_context:
+        lines.append('DOC_EXCERPTS')
+        for item in doc_context[:6]:
+            status = str(item.get('extraction_status') or 'unknown')
+            filename = str(item.get('filename') or '')
+            excerpt = str(item.get('excerpt') or '').strip()
+            if not excerpt:
+                lines.append(f'- {filename} | {status}')
+                continue
+            compact = ' '.join(excerpt.split())
+            lines.append(f'- {filename} | {status} | {compact[:500]}')
+        lines.append('')
+    lines.append('FIELDS')
+    for item in variables:
+        name = str(item.get('name') or '')
+        primitive = str(item.get('primitive_type') or 'unknown')
+        samples = ', '.join((item.get('samples') or [])[:6])
+        shared = (item.get('catalog') or {}).get('family_count', 0)
+        signals = ','.join((item.get('signals') or [])[:4])
+        lines.append(f'- {name} | {primitive} | shared={shared} | sig={signals} | samp={samples}')
+    lines.extend(['', 'Return grammar only.'])
+
+    return TranslationBundle(
+        family_id=str(family.get('family_id') or ''),
+        prompt_text='\n'.join(lines),
+        variables=variables,
+        docs=list(docs),
+    )
 
 
 
@@ -3449,43 +4672,14 @@ def any_code_matches(codes: Iterable[str | None], query: CodeQuery) -> bool:
 ###############################################################################
 ### FILE: pegasus_data/pegasus/registry/fields.py
 ###############################################################################
-FIELD_REGISTRY = {
-    'SINASC': {
-        'CODMUNNASC': 'support.municipality',
-        'CODMUNRES': 'support.municipality_residence',
-        'DTNASC': 'support.date',
-        'SEXO': 'subgroups.sex',
-        'PESO': 'continuous.birth_weight_g',
-        'APGAR1': 'continuous.apgar_1m',
-        'APGAR5': 'continuous.apgar_5m',
-        'CODANOMAL': 'code_roles.anomaly',
-        'CODANOMAL1': 'annotations.anomaly_slots',
-        'CODANOMAL2': 'annotations.anomaly_slots',
-        'CODANOMAL3': 'annotations.anomaly_slots',
-        'CODANOMAL4': 'annotations.anomaly_slots',
-    },
-    'SIM': {
-        'CODMUNOCOR': 'support.municipality',
-        'CODMUNRES': 'support.municipality_residence',
-        'DTOBITO': 'support.date',
-        'CAUSABAS': 'code_roles.cause_of_death',
-    },
-    'SINAN': {
-        'ID_MN_RESI': 'support.municipality',
-        'MUN_RESI': 'support.municipality',
-        'DT_NOTIFIC': 'support.date',
-        'CS_SEXO': 'subgroups.sex',
-        'ID_AGRAVO': 'code_roles.condition',
-        'AGRAVO': 'code_roles.condition',
-        'CID10': 'code_roles.condition',
-    },
-    'SIH': {
-        'MUNIC_MOV': 'support.municipality',
-        'MUNIC_RES': 'support.municipality_residence',
-        'DT_INTER': 'support.date',
-        'DIAG_PRINC': 'code_roles.diagnosis',
-        'PROC_REA': 'code_roles.procedure',
-    },
+"""
+Canonical field mappings remain intentionally sparse until DATASUS translation
+artifacts justify stable variable-level commitments.
+"""
+
+FIELD_REGISTRY: dict[str, dict[str, str]] = {
+    'DATASUS_GENERIC': {},
+    'SIDRA': {},
 }
 
 
@@ -3493,34 +4687,23 @@ FIELD_REGISTRY = {
 ###############################################################################
 ### FILE: pegasus_data/pegasus/registry/sources.py
 ###############################################################################
+"""
+Minimal source registry placeholders.
+
+The active DATASUS workflow is intentionally black-box first: scan, organize,
+profile, and translate before asserting source-specific semantics. These
+entries therefore stay generic until accepted translation/mapping artifacts
+justify stronger canonical commitments.
+"""
+
 SOURCE_REGISTRY = {
-    'SINASC': {
+    'DATASUS_GENERIC': {
         'source_family': 'datasus',
-        'support_role': 'birth_occurrence',
-        'event_type': 'birth',
-        'dataset': 'DN',
-        'code_roles': ['anomaly'],
-    },
-    'SIM': {
-        'source_family': 'datasus',
-        'support_role': 'death_occurrence',
-        'event_type': 'death',
-        'dataset': 'DO',
-        'code_roles': ['cause_of_death', 'associated_cause'],
-    },
-    'SINAN': {
-        'source_family': 'datasus',
-        'support_role': 'notification_residence',
-        'event_type': 'notification',
-        'dataset': 'NOTIFIC',
-        'code_roles': ['condition'],
-    },
-    'SIH': {
-        'source_family': 'datasus',
-        'support_role': 'hospitalization_occurrence',
-        'event_type': 'hospitalization',
-        'dataset': 'AIH',
-        'code_roles': ['diagnosis', 'secondary_diagnosis', 'procedure'],
+        'support_role': None,
+        'event_type': None,
+        'dataset': None,
+        'code_roles': [],
+        'mapping_status': 'translation_driven',
     },
     'SIDRA': {
         'source_family': 'sidra',
@@ -3528,6 +4711,7 @@ SOURCE_REGISTRY = {
         'event_type': 'aggregate_context',
         'dataset': None,
         'code_roles': [],
+        'mapping_status': 'stable',
     },
 }
 

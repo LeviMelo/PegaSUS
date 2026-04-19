@@ -23,10 +23,13 @@ def build_translation_bundle(
     document_registry: list[dict[str, Any]] | None = None,
     max_fields: int = 120,
 ) -> TranslationBundle:
-    profile_map = {str(row.get('path') or ''): row for row in profile_rows}
+    profile_map = {
+        str(row.get('source_path') or row.get('path') or ''): row
+        for row in profile_rows
+    }
     catalog_map = {str(row.get('variable') or '').upper(): row for row in variable_catalog}
     variables: list[dict[str, Any]] = []
-    for path in family.get('files', []) or []:
+    for path in family.get('member_files', family.get('files', [])) or []:
         row = profile_map.get(str(path))
         if not row:
             continue
@@ -35,7 +38,8 @@ def build_translation_bundle(
             merged = dict(field)
             if name in catalog_map:
                 merged['catalog'] = catalog_map[name]
-            merged['path'] = str(path)
+            merged['source_path'] = str(path)
+            merged['local_path'] = row.get('local_path')
             variables.append(merged)
 
     variables.sort(key=lambda item: (-(item.get('catalog') or {}).get('family_count', 0), str(item.get('name') or '')))

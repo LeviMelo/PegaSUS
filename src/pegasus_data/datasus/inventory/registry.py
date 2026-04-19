@@ -11,9 +11,13 @@ class FamilyRegistryEntry:
     series_prefix: str | None
     partition_type: str
     date_format: str | None
+    time_range: str | None
     time_range_display: str | None
     file_count: int
+    member_files: list[str]
     source_paths: list[str]
+    geo_coverage: list[str]
+    path_semantics: dict[str, str]
     schema_signatures: list[str]
     variable_count: int
     variables: list[str]
@@ -30,7 +34,7 @@ def build_family_registry(
     profile_rows = profile_rows or []
     variables_by_path: dict[str, set[str]] = {}
     for row in profile_rows:
-        path = str(row.get('path') or '')
+        path = str(row.get('source_path') or row.get('path') or '')
         field_names = {
             str(field.get('name') or '').upper()
             for field in row.get('field_profiles') or []
@@ -40,7 +44,7 @@ def build_family_registry(
 
     out: list[FamilyRegistryEntry] = []
     for family in families:
-        paths = [str(path) for path in family.get('files', []) or []]
+        paths = [str(path) for path in family.get('member_files', family.get('files', [])) or []]
         family_vars: set[str] = set()
         for path in paths:
             family_vars.update(variables_by_path.get(path, set()))
@@ -50,9 +54,13 @@ def build_family_registry(
             series_prefix=family.get('series_prefix'),
             partition_type=str(family.get('partition_type') or 'Unknown'),
             date_format=family.get('date_format'),
+            time_range=family.get('time_range') or family.get('time_range_display'),
             time_range_display=family.get('time_range_display'),
             file_count=int(family.get('file_count') or 0),
+            member_files=paths,
             source_paths=list(family.get('source_paths') or []),
+            geo_coverage=list(family.get('geo_coverage') or []),
+            path_semantics=dict(family.get('path_semantics') or {}),
             schema_signatures=list(family.get('schema_signatures') or []),
             variable_count=len(family_vars),
             variables=sorted(family_vars),

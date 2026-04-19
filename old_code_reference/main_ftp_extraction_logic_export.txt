@@ -1,0 +1,1061 @@
+# %%
+import ftplib
+import os
+import sys
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# --- Configuration ---
+FTP_HOST = "ftp.datasus.gov.br"
+BASE_PATH = "/dissemin/publicos/"
+TARGET_STATE_CODE = "AL"
+MAX_WORKERS = 200  # Number of parallel threads to use
+CACHE_FILE = "datasus_ftp_cache.json"
+
+def ftp_connect():
+    """Establishes and returns a new FTP connection. Each thread needs its own."""
+    try:
+        ftp = ftplib.FTP(FTP_HOST, timeout=60)
+        ftp.login()
+        return ftp
+    except Exception as e:
+        # This error will be caught by the worker thread
+        print(f"THREAD ERROR: Could not connect. {e}", file=sys.stderr)
+        return None
+
+def recursive_scan(ftp, path, system_files):
+    """
+    The core recursive scanner. It's called by the main worker function.
+    It populates the 'system_files' dictionary.
+    """
+    try:
+        items = ftp.nlst(path)
+    except Exception:
+        return # Ignore directories that can't be listed
+
+    dbc_found = system_files['dbc'] is not None
+
+    for item_name in items:
+        # Check if the item is a directory
+        try:
+            ftp.cwd(item_name)
+            # It's a directory, recurse
+            recursive_scan(ftp, item_name, system_files)
+            ftp.cwd(path) # Go back
+        except ftplib.error_perm:
+            # It's a file, process it
+            filename_lower = item_name.lower()
+            basename_upper = os.path.basename(item_name).upper()
+
+            # Always check for PDFs
+            if filename_lower.endswith('.pdf'):
+                system_files['pdfs'].append(item_name)
+
+            # Only check for DBC if we haven't found one for this system yet
+            if not dbc_found:
+                if f"{TARGET_STATE_CODE}" in basename_upper and filename_lower.endswith('.dbc'):
+                    system_files['dbc'] = item_name
+                    dbc_found = True # Update flag to stop searching for DBCs
+
+def crawl_single_system(system_name):
+    """
+    This is the worker function that each thread will execute.
+    It crawls one entire system directory (e.g., '/dissemin/publicos/SIM').
+    """
+    print(f"  [Thread starting] for system: {system_name}")
+    ftp = ftp_connect()
+    if not ftp:
+        return system_name, {'pdfs': [], 'dbc': 'CONNECTION_FAILED'}
+
+    system_path = os.path.join(BASE_PATH, system_name)
+    system_files = {'pdfs': [], 'dbc': None}
+
+    try:
+        recursive_scan(ftp, system_path, system_files)
+    except Exception as e:
+        print(f"THREAD ERROR in {system_name}: {e}", file=sys.stderr)
+    finally:
+        ftp.quit()
+        print(f"  [Thread finished] for system: {system_name}")
+        return system_name, system_files
+
+def main():
+    """Main execution function."""
+    # 1. Caching Mechanism: Check if a local cache exists
+    if os.path.exists(CACHE_FILE):
+        print(f"--- Found local cache file ('{CACHE_FILE}'). Displaying cached results. ---")
+        print("--- To perform a fresh crawl, delete this file and run again. ---")
+        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+            results = json.load(f)
+    else:
+        # 2. No cache found, perform the full parallel crawl
+        print("--- No cache found. Starting full parallel FTP crawl... ---")
+        ftp = ftp_connect()
+        if not ftp:
+            return
+
+        try:
+            ftp.cwd(BASE_PATH)
+            all_systems = sorted(ftp.nlst())
+            ftp.quit()
+            print(f"Found {len(all_systems)} systems. Submitting to a thread pool of {MAX_WORKERS} workers.")
+        except Exception as e:
+            print(f"FATAL: Could not list base systems directory. Error: {e}", file=sys.stderr)
+            ftp.quit()
+            return
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Submit all crawl tasks to the thread pool
+            future_to_system = {executor.submit(crawl_single_system, system): system for system in all_systems}
+
+            for future in as_completed(future_to_system):
+                system_name = future_to_system[future]
+                try:
+                    name, data = future.result()
+                    results[name] = data
+                except Exception as e:
+                    print(f"ERROR processing future for {system_name}: {e}", file=sys.stderr)
+                    results[system_name] = {'pdfs': [], 'dbc': 'CRAWL_FAILED'}
+
+        # 3. Save the fresh results to the cache file
+        print(f"\n--- Crawl complete. Saving results to '{CACHE_FILE}' for future runs. ---")
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=4)
+
+    # 4. Print the final report from either cache or the fresh crawl
+    print("\n\n" + "="*30)
+    print("      COMPREHENSIVE FTP REPORT")
+    print("="*30)
+    for system_name in sorted(results.keys()):
+        files = results[system_name]
+        print(f"\n## System: {system_name}")
+        
+        if files['dbc'] and 'FAILED' not in files['dbc']:
+            print(f"  Representative DBC File for '{TARGET_STATE_CODE}':")
+            print(f"    - ftp://{FTP_HOST}{files['dbc']}")
+        else:
+            print(f"  Representative DBC File for '{TARGET_STATE_CODE}': Not Found or Failed")
+            
+        if files['pdfs']:
+            print(f"  PDF Documentation Found ({len(files['pdfs'])}):")
+            for pdf_path in sorted(files['pdfs']):
+                print(f"    - ftp://{FTP_HOST}{pdf_path}")
+        else:
+            print("  PDF Documentation Found: None")
+
+if __name__ == "__main__":
+    main()
+
+# %%
+import os
+import re
+import json
+import pandas as pd
+from rapidfuzz import fuzz
+from tqdm.notebook import tqdm
+from collections import defaultdict
+
+# --- Configuration ---
+INPUT_FILE = 'link_ftp.txt'
+DATA_EXTENSIONS = {'.dbc', '.dbf', 'xml', '.csv', '.zip', '.gz'} # Added xml
+UF_CODES = {
+    'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
+    'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC',
+    'SP', 'SE', 'TO'
+}
+# --- Heuristic Thresholds and Weights (NOW MORE ADVANCED) ---
+UF_VALIDATION_THRESHOLD = 0.35
+MIN_UF_COUNT_FOR_VALIDATION = 4
+PDF_RELEVANCE_THRESHOLD = 65  # Lowered threshold
+# Weights for PDF scoring
+WEIGHT_PROXIMITY = 0.4
+WEIGHT_FUZZY_NAME = 0.6
+# Bonus points for finding keywords in PDF names
+KEYWORD_BONUS = 25
+PDF_KEYWORDS = ['manual', 'dicionario', 'leia-me', 'layout', 'estrutura', 'dic_dados']
+
+
+def parse_links_to_dataframe(filepath):
+    print(f"Phase 1: Parsing all URLs from '{filepath}'...")
+    parsed_files = []
+    filename_pattern = re.compile(r'([A-Z_]+)((?:[A-Z]{2})|(?:BR))(\d+)', re.IGNORECASE)
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    for line in tqdm(lines, desc="Parsing URLs"):
+        url = line.strip()
+        if not url: continue
+        path = urlparse(url).path
+        directory, filename = os.path.split(path)
+        name_part, extension = os.path.splitext(filename)
+        
+        file_info = {
+            'url': url, 'directory': directory, 'filename': filename,
+            'extension': extension.lower(),
+            'path_components': [comp for comp in directory.split('/') if comp]
+        }
+        
+        if file_info['extension'] in DATA_EXTENSIONS:
+            match = filename_pattern.match(name_part)
+            if match:
+                file_info['series_prefix'] = match.group(1).upper()
+                file_info['geo_code'] = match.group(2).upper()
+                file_info['date_code'] = match.group(3)
+        parsed_files.append(file_info)
+        
+    print(f"-> Parsed {len(parsed_files)} file paths.")
+    return pd.DataFrame(parsed_files)
+
+
+def validate_and_characterize_series(df):
+    print("\nPhase 2: Identifying and validating data series...")
+    df_data = df[df['extension'].isin(DATA_EXTENSIONS) & df['series_prefix'].notna()].copy()
+    validated_series = {}
+    potential_series = df_data.groupby('series_prefix')
+
+    for prefix, group in tqdm(potential_series, desc="Validating Series"):
+        unique_geo_codes = set(group['geo_code'].unique())
+        is_nation_wide = 'BR' in unique_geo_codes
+        two_letter_codes = {code for code in unique_geo_codes if len(code) == 2}
+        valid_uf_codes_found = two_letter_codes.intersection(UF_CODES)
+        
+        is_state_partitioned = False
+        if len(two_letter_codes) > 0:
+            ratio_is_valid_uf = len(valid_uf_codes_found) / len(two_letter_codes)
+            if ratio_is_valid_uf >= UF_VALIDATION_THRESHOLD and len(valid_uf_codes_found) >= MIN_UF_COUNT_FOR_VALIDATION:
+                is_state_partitioned = True
+
+        partition_type = "Unknown"
+        # Determine partition type
+        if is_state_partitioned and is_nation_wide: partition_type = "Mixed-Partition"
+        elif is_state_partitioned: partition_type = "State-Partitioned"
+        elif is_nation_wide: partition_type = "Nation-Wide"
+
+        if partition_type != "Unknown":
+            # LOGGING: Announce successful validation
+            print(f"\n[Validation LOG] Series '{prefix}' validated as '{partition_type}'")
+            print(f"  -> Found {len(valid_uf_codes_found)}/{len(two_letter_codes)} valid UFs. Ratio: {ratio_is_valid_uf:.2f}")
+
+            min_date = group['date_code'].astype(int).min()
+            max_date = group['date_code'].astype(int).max()
+            
+            validated_series[prefix] = {
+                'partition_type': partition_type, 'time_range': f"{min_date} - {max_date}",
+                'geo_coverage': sorted(list(unique_geo_codes)), 'file_count': len(group),
+                'source_paths': sorted(list(group['directory'].unique())), 'associated_pdfs': []
+            }
+            
+    print(f"-> Validated {len(validated_series)} distinct data series.")
+    return validated_series
+
+
+def associate_pdfs(validated_series, df):
+    print("\nPhase 3: Associating PDF documentation with enhanced logic...")
+    df_pdfs = df[df['extension'] == '.pdf'].copy()
+
+    for series_name, series_info in tqdm(validated_series.items(), desc="Associating PDFs"):
+        # LOGGING: Announce which series we are working on
+        print(f"\n[PDF LOG] Searching for documentation for series: '{series_name}'")
+        candidate_pdfs = []
+        data_path_components = series_info['source_paths'][0].split('/')[1:]
+
+        for _, pdf_row in df_pdfs.iterrows():
+            pdf_path_components = pdf_row['path_components']
+            
+            # Tree Distance Calculation
+            common_ancestor_len = sum(1 for d1, d2 in zip(data_path_components, pdf_path_components) if d1 == d2)
+            tree_distance = (len(data_path_components) - common_ancestor_len) + (len(pdf_path_components) - common_ancestor_len)
+
+            if tree_distance <= 4: # Consider only reasonably close PDFs
+                pdf_name_no_ext = os.path.splitext(pdf_row['filename'])[0].lower()
+                
+                # New Heuristic: Include parent directory name in fuzzy matching to avoid cross-contamination
+                series_context_string = f"{series_name} {' '.join(data_path_components[-2:])}".lower()
+                pdf_context_string = f"{pdf_name_no_ext} {' '.join(pdf_path_components[-2:])}".lower()
+                fuzzy_score = fuzz.partial_ratio(series_context_string, pdf_context_string)
+
+                # New Heuristic: Keyword bonus
+                keyword_bonus = KEYWORD_BONUS if any(kw in pdf_name_no_ext for kw in PDF_KEYWORDS) else 0
+
+                # Refined relevance score
+                proximity_score = max(0, 100 - (tree_distance * 20))
+                relevance_score = (proximity_score * WEIGHT_PROXIMITY) + (fuzzy_score * WEIGHT_FUZZY_NAME) + keyword_bonus
+                
+                # LOGGING: Show the work for each potential candidate PDF
+                print(f"  - Candidate: {pdf_row['filename']}")
+                print(f"    - Tree Dist: {tree_distance} (Prox Score: {proximity_score:.0f}) | Fuzzy Score: {fuzzy_score:.0f} | Keyword Bonus: {keyword_bonus}")
+                print(f"    - FINAL SCORE: {relevance_score:.1f}")
+
+                if relevance_score >= PDF_RELEVANCE_THRESHOLD:
+                    print("    -> ACCEPTED")
+                    candidate_pdfs.append({'url': pdf_row['url'], 'score': int(relevance_score)})
+                else:
+                    print("    -> REJECTED")
+
+        series_info['associated_pdfs'] = sorted(candidate_pdfs, key=lambda x: x['score'], reverse=True)
+        
+    print("-> PDF association complete.")
+    return validated_series
+
+def group_series_by_system(validated_series):
+    """
+    New phase to group granular series into larger 'System Groups' based on path similarity.
+    """
+    print("\nPhase 3.5: Grouping granular series into likely systems...")
+    # Heuristic: The "system" is likely one of the top-level path components.
+    # e.g., 'dissemin/publicos/SIASUS' -> system component is 'SIASUS'
+    system_groups = defaultdict(list)
+    for series_name, series_info in validated_series.items():
+        # Find the most likely system name from the source paths
+        # (usually the 3rd component, e.g., after 'dissemin', 'publicos')
+        if len(series_info['source_paths']) > 0:
+            path_parts = series_info['source_paths'][0].split('/')
+            if len(path_parts) > 3:
+                system_guess = path_parts[3]
+                system_groups[system_guess].append(series_name)
+    
+    print(f"-> Grouped series into {len(system_groups)} likely systems.")
+    return system_groups
+
+
+def print_report(final_data, system_groups):
+    """Prints the final, structured report, now grouped by likely system."""
+    print("\n\n" + "="*40)
+    print("      DATASUS FTP DISCOVERY REPORT")
+    print("="*40)
+    
+    for system_name in sorted(system_groups.keys()):
+        print(f"\n\n## System Group: {system_name}")
+        print("-" * (17 + len(system_name)))
+        
+        for series_name in sorted(system_groups[system_name]):
+            info = final_data[series_name]
+            print(f"\n  ### Data Series: {series_name}")
+            print(f"    - Partition Type: {info['partition_type']}")
+            print(f"    - File Count: {info['file_count']}")
+            print(f"    - Time Range: {info['time_range']}")
+            print(f"    - Geo Coverage ({len(info['geo_coverage'])} codes): {', '.join(info['geo_coverage'][:10])}{'...' if len(info['geo_coverage']) > 10 else ''}")
+            
+            print("\n    Associated Documentation (Relevance Score):")
+            if info['associated_pdfs']:
+                for pdf in info['associated_pdfs']:
+                    print(f"      - [{pdf['score']}] {pdf['url']}")
+            else:
+                print("      - None found meeting the relevance criteria.")
+            
+            print("\n    Discovered at Paths:")
+            for path in info['source_paths']:
+                print(f"      - {path}/")
+
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    if not os.path.exists(INPUT_FILE):
+        print(f"FATAL ERROR: Input file '{INPUT_FILE}' not found.")
+    else:
+        # Phase 1: Parse everything into a structured DataFrame
+        master_df = parse_links_to_dataframe(INPUT_FILE)
+        
+        # Phase 2: Identify and profile all the granular data series
+        validated_series_data = validate_and_characterize_series(master_df)
+        
+        # Phase 3: Run the new, more intelligent PDF association
+        final_results = associate_pdfs(validated_series_data, master_df)
+        
+        # New Phase 3.5: Group the series into systems
+        system_groups = group_series_by_system(final_results)
+        
+        # Phase 4: Print the final, hierarchically grouped report
+        print_report(final_results, system_groups)
+
+# %%
+import os
+import re
+import json
+import pandas as pd
+from rapidfuzz import fuzz
+from tqdm.notebook import tqdm
+from collections import defaultdict
+import datetime
+
+# --- Configuration & Heuristics ---
+INPUT_FILE = 'link_ftp.txt'
+LOG_FILE = 'discovery_log.txt'
+DATA_EXTENSIONS = {'.dbc', '.dbf', '.xml', '.csv', '.zip', '.gz'}
+UF_CODES = { 'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO' }
+MIN_UF_COUNT_FOR_STATE_VALIDATION = 20
+MIN_FILES_FOR_PATTERN_VALIDATION = 5
+PDF_RELEVANCE_THRESHOLD = 70
+WEIGHT_PROXIMITY = 0.3
+WEIGHT_FUZZY_NAME = 0.3
+WEIGHT_FUZZY_PATH = 0.4
+KEYWORD_BONUS = 25
+PDF_KEYWORDS = ['manual', 'dicionario', 'leia-me', 'layout', 'estrutura', 'dic_dados', 'instrucoes']
+AUXILIARY_PATH_KEYWORDS = ['TABELAS', 'DOCS', 'DOCUMENTOS', 'TABWIN', 'DOC']
+EXCLUSION_PATH_KEYWORDS = ['/IBGE/']
+STAGING_PATH_KEYWORDS = ['PRELIM', 'Homol']
+FINAL_PATH_KEYWORDS = ['FINAIS', 'DADOS']
+
+log_entries = []
+
+def log_message(level, message, to_console=True):
+    entry = f"[{level.upper()}] {message}"
+    if to_console:
+        print(entry)
+    log_entries.append(entry)
+
+def format_date_range(min_date_str, max_date_str, date_format):
+    try:
+        if date_format == 'YYMM':
+            min_y, min_m = int(min_date_str[:2]), int(min_date_str[2:])
+            max_y, max_m = int(max_date_str[:2]), int(max_date_str[2:])
+            min_y = 2000 + min_y if min_y < 70 else 1900 + min_y
+            max_y = 2000 + max_y if max_y < 70 else 1900 + max_y
+            min_dt = datetime.date(min_y, min_m, 1).strftime('%b %Y')
+            max_dt = datetime.date(max_y, max_m, 1).strftime('%b %Y')
+            return f"{min_dt} to {max_dt}"
+        elif date_format == 'YY':
+            min_y = int(min_date_str)
+            max_y = int(max_date_str)
+            min_y = 2000 + min_y if min_y < 70 else 1900 + min_y
+            max_y = 2000 + max_y if max_y < 70 else 1900 + max_y
+            return f"{min_y} to {max_y}"
+    except:
+        return f"{min_date_str} to {max_date_str} (raw)"
+    return f"{min_date_str} to {max_date_str} (raw)"
+
+def parse_and_classify_paths(filepath):
+    log_message("info", f"Phase 1: Parsing and Classifying URLs from '{filepath}'...")
+    parsed_files, skipped_count = [], 0
+    patterns = {
+        'PREFIX_GEO_YYMM': re.compile(r'^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{4})$', re.IGNORECASE),
+        'PREFIX_GEO_YY': re.compile(r'^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{2})$', re.IGNORECASE)
+    }
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    for line in tqdm(lines, desc="Parsing URLs"):
+        url = line.strip()
+        if not url: continue
+        if any(ex_path in url.upper() for ex_path in EXCLUSION_PATH_KEYWORDS):
+            skipped_count += 1
+            continue
+        path = urlparse(url).path
+        directory, filename = os.path.split(path)
+        name_part, extension = os.path.splitext(filename)
+        path_upper = path.upper()
+        path_type = 'Primary'
+        if any(keyword in path_upper for keyword in AUXILIARY_PATH_KEYWORDS):
+            path_type = 'Auxiliary'
+        file_info = {'url': url, 'directory': directory, 'filename': filename, 'extension': extension.lower(), 'path_components': [comp for comp in directory.split('/') if comp], 'path_type': path_type}
+        if file_info['extension'] in DATA_EXTENSIONS and path_type == 'Primary':
+            for pattern_name, pattern in patterns.items():
+                match = pattern.match(name_part)
+                if match:
+                    file_info['pattern_name'] = pattern_name
+                    file_info['series_prefix'] = match.group(1).upper()
+                    file_info['geo_code'] = match.group(2).upper()
+                    file_info['date_code'] = match.group(3)
+                    break 
+        parsed_files.append(file_info)
+    log_message("info", f"-> Parsed {len(lines)} total URLs.")
+    log_message("info", f"-> Skipped {skipped_count} paths based on exclusion rules (e.g., /IBGE/).")
+    log_message("info", f"-> Kept {len(parsed_files)} files for analysis.")
+    return pd.DataFrame(parsed_files)
+
+def validate_and_consolidate_series(df):
+    log_message("info", "\nPhase 2: Validating & Consolidating Data Series...")
+    df_data = df[df['pattern_name'].notna()].copy()
+    validated_series = {}
+    validated_files_indices = []
+    for directory, group in tqdm(df_data.groupby('directory'), desc="Validating Patterns"):
+        if len(group) >= MIN_FILES_FOR_PATTERN_VALIDATION:
+            validated_files_indices.extend(group.index)
+    df_validated = df.loc[list(set(validated_files_indices))].copy()
+    log_message("info", f"-> {len(df_validated)} files passed relational pattern validation.")
+    log_message("info", "\nPhase 3: Consolidating Validated Files into Data Series...")
+    for prefix, group in tqdm(df_validated.groupby('series_prefix'), desc="Consolidating Series"):
+        log_message("debug", f"  Validating potential series: '{prefix}' with {len(group)} files...", to_console=False)
+        unique_geo_codes = set(group['geo_code'].unique())
+        is_state_partitioned = len(unique_geo_codes) >= MIN_UF_COUNT_FOR_STATE_VALIDATION
+        is_nation_wide = 'BR' in unique_geo_codes
+        partition_type = "Unknown"
+        if is_state_partitioned and is_nation_wide: partition_type = "Mixed-Partition"
+        elif is_state_partitioned: partition_type = "State-Partitioned"
+        elif is_nation_wide: partition_type = "Nation-Wide"
+        if partition_type != "Unknown":
+            date_code_lengths = group['date_code'].str.len().value_counts()
+            date_format = 'Unknown'
+            if not date_code_lengths.empty:
+                primary_len = date_code_lengths.idxmax()
+                if primary_len == 4: date_format = 'YYMM'
+                elif primary_len == 2: date_format = 'YY'
+            min_date, max_date = group['date_code'].min(), group['date_code'].max()
+            validated_series[prefix] = {
+                'partition_type': partition_type, 'time_range_str': format_date_range(min_date, max_date, date_format),
+                'raw_time_range': (min_date, max_date), 'date_format': date_format,
+                'validated_pattern': group['pattern_name'].iloc[0], 'geo_coverage': sorted(list(unique_geo_codes)),
+                'file_count': len(group), 'source_paths': sorted(list(group['directory'].unique())),
+                'file_samples': group['filename'].head(10).tolist(), 'associated_pdfs': []
+            }
+            log_message("debug", f"    -> VALIDATED as '{partition_type}'. Pattern: {validated_series[prefix]['validated_pattern']}", to_console=False)
+    log_message("info", f"-> Consolidated into {len(validated_series)} high-confidence data series.")
+    return validated_series
+
+def infer_path_semantics(series_profiles, df):
+    """(Restored) Phase 4: Infers path meanings based on keywords and date ranges."""
+    log_message("info", "\nPhase 4: Inferring Path Semantics...")
+    df_data = df[df['series_prefix'].isin(series_profiles.keys())].copy()
+
+    for series_name, series_info in tqdm(series_profiles.items(), desc="Inferring Path Semantics"):
+        series_info['path_semantics'] = {}
+        global_max_date = int(series_info['raw_time_range'][1])
+        
+        for path in series_info['source_paths']:
+            path_files = df_data[(df_data['series_prefix'] == series_name) & (df_data['directory'] == path)]
+            if path_files.empty: continue
+            
+            path_max_date = path_files['date_code'].astype(str).str.replace(' ', '').astype(int).max()
+            
+            tag = '[Primary]'
+            if any(keyword in path.upper() for keyword in STAGING_PATH_KEYWORDS):
+                tag = '[Staging]'
+            # Heuristic: if path max date is significantly older than the series' global max date, tag as legacy.
+            # This handles YYMM (e.g., 2412 vs 9812 -> diff > 500) and YY formats.
+            elif (global_max_date - path_max_date > 500 and series_info['date_format'] == 'YYMM') or \
+                 (global_max_date - path_max_date > 5 and series_info['date_format'] == 'YY'):
+                tag = '[Legacy Archive]'
+            series_info['path_semantics'][path] = tag
+    
+    log_message("info", "-> Path semantics inference complete.")
+    return series_profiles
+
+def associate_pdfs(validated_series, df):
+    log_message("info", "\nPhase 5: Associating PDF Documentation...")
+    df_pdfs = df[df['extension'] == '.pdf'].copy()
+    for series_name, series_info in tqdm(validated_series.items(), desc="Associating PDFs"):
+        log_message("debug", f"\n-- Searching PDFs for series: '{series_name}' --", to_console=False)
+        candidate_pdfs, data_path_components = [], series_info['source_paths'][0].split('/')[1:]
+        for _, pdf_row in df_pdfs.iterrows():
+            pdf_path_components = pdf_row['path_components']
+            common_ancestor_len = sum(1 for d1, d2 in zip(data_path_components, pdf_path_components) if d1 == d2)
+            tree_distance = (len(data_path_components) - common_ancestor_len) + (len(pdf_path_components) - common_ancestor_len)
+            if tree_distance <= 4:
+                pdf_name_no_ext = os.path.splitext(pdf_row['filename'])[0].lower()
+                series_context_string = f"{series_name} {' '.join(data_path_components[-2:])}".lower()
+                pdf_context_string = f"{pdf_name_no_ext} {' '.join(pdf_path_components[-2:])}".lower()
+                fuzzy_name_score = fuzz.partial_ratio(series_name.lower(), pdf_name_no_ext)
+                fuzzy_path_score = fuzz.token_set_ratio(series_context_string, pdf_context_string)
+                keyword_bonus = KEYWORD_BONUS if any(kw in pdf_name_no_ext for kw in PDF_KEYWORDS) else 0
+                proximity_score = max(0, 100 - (tree_distance * 20))
+                relevance_score = (proximity_score * WEIGHT_PROXIMITY) + (fuzzy_name_score * WEIGHT_FUZZY_NAME) + (fuzzy_path_score * WEIGHT_FUZZY_PATH) / 2 + keyword_bonus
+                log_message("debug", f"  - Candidate: {pdf_row['filename']} | TreeDist: {tree_distance} | FuzzName: {fuzzy_name_score:.0f} | FuzzPath: {fuzzy_path_score:.0f} | Final Score: {relevance_score:.1f}", to_console=False)
+                if relevance_score >= PDF_RELEVANCE_THRESHOLD:
+                    log_message("debug", "    -> ACCEPTED", to_console=False)
+                    candidate_pdfs.append({'url': pdf_row['url'], 'score': int(relevance_score)})
+        series_info['associated_pdfs'] = sorted(candidate_pdfs, key=lambda x: x['score'], reverse=True)
+    log_message("info", "-> PDF association complete.")
+    return validated_series
+
+def generate_final_report(final_data):
+    log_message("info", "\n\n" + "="*40, to_console=False)
+    log_message("info", "      DATASUS FTP DISCOVERY REPORT", to_console=False)
+    log_message("info", "="*40, to_console=False)
+    for series_name in sorted(final_data.keys()):
+        info = final_data[series_name]
+        print(f"\n\n## Data Series: {series_name}")
+        print(f"  - Validated Pattern: {info['validated_pattern']} ({info['date_format']} format)")
+        print(f"  - Partition Type: {info['partition_type']}")
+        print(f"  - File Count: {info['file_count']}")
+        print(f"  - Time Range: {info['time_range_str']}")
+        print(f"  - Geo Coverage ({len(info['geo_coverage'])} codes): {', '.join(info['geo_coverage'])}")
+        print("\n  Associated Documentation (Relevance Score):")
+        if info['associated_pdfs']:
+            for pdf in info['associated_pdfs']: print(f"    - [{pdf['score']}] {pdf['url']}")
+        else: print("    - None found.")
+        print("\n  Discovered at Paths (inferred type):")
+        if 'path_semantics' in info:
+            for path, tag in info['path_semantics'].items(): print(f"    - {tag} {path}/")
+        else: print("    - No path semantics inferred.")
+        print("\n  File Samples:")
+        for sample in info['file_samples']: print(f"    - {sample}")
+    with open(LOG_FILE, 'w', encoding='utf-8') as f:
+        f.write("\n".join(log_entries))
+    print(f"\n\nFull diagnostic log saved to '{LOG_FILE}'")
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    if not os.path.exists(INPUT_FILE):
+        print(f"FATAL ERROR: Input file '{INPUT_FILE}' not found.")
+    else:
+        master_df = parse_and_classify_paths(INPUT_FILE)
+        validated_data = validate_and_consolidate_series(master_df)
+        # The two functions below were previously combined, now they are separate
+        series_with_paths = infer_path_semantics(validated_data, master_df)
+        final_results = associate_pdfs(series_with_paths, master_df) # Correctly passing the master_df
+        generate_final_report(final_results)
+
+# %%
+import os
+import re
+import json
+import pandas as pd
+from rapidfuzz import fuzz, process
+from tqdm.notebook import tqdm
+from collections import defaultdict
+import datetime
+import numpy as np #<-- Import numpy to check for its types
+
+# --- Configuration & Heuristics ---
+INPUT_FILE = 'link_ftp.txt'
+LOG_FILE = 'discovery_log.txt'
+JSON_OUTPUT_FILE = 'datasus_discovery_catalog.json'
+DATA_EXTENSIONS = {'.dbc', '.dbf', '.xml', '.csv', '.zip', '.gz'}
+UF_CODES = { 'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO' }
+MIN_UF_COUNT_FOR_STATE_VALIDATION = 20
+MIN_FILES_FOR_PATTERN_VALIDATION = 5
+SERIES_MERGE_THRESHOLD = 90
+PDF_RELEVANCE_THRESHOLD = 60
+WEIGHT_PROXIMITY, WEIGHT_FUZZY_NAME, WEIGHT_FUZZY_PATH = 0.35, 0.25, 0.40
+KEYWORD_BONUS = 25
+PDF_KEYWORDS = ['manual', 'dicionario', 'leia-me', 'layout', 'estrutura', 'dic_dados', 'instrucoes']
+AUXILIARY_PATH_KEYWORDS = ['TABELAS', 'DOCS', 'DOCUMENTOS', 'TABWIN', 'DOC']
+EXCLUSION_PATH_KEYWORDS = ['/IBGE/']
+STAGING_PATH_KEYWORDS = ['PRELIM', 'Homol']
+
+log_entries = []
+
+def log_message(level, message, to_console=True):
+    entry = f"[{level.upper()}] {message}"
+    if to_console: print(entry)
+    log_entries.append(entry)
+
+def normalize_datecode(date_code_str, date_format):
+    try:
+        date_code = int(date_code_str)
+        if date_format == 'YY':
+            year = 2000 + date_code if date_code < 70 else 1900 + date_code
+            return year * 100
+        if date_format == 'YYMM':
+            year, month = date_code // 100, date_code % 100
+            if not 1 <= month <= 12: return 0
+            year = 2000 + year if year < 70 else 1900 + year
+            return year * 100 + month
+        if date_format == 'YYYY':
+            return date_code * 100
+    except (ValueError, TypeError): return 0
+    return 0
+
+def format_normalized_date(normalized_date):
+    if normalized_date == 0: return "N/A"
+    year, month = normalized_date // 100, normalized_date % 100
+    try:
+        if month == 0: return str(year)
+        else: return datetime.date(year, month, 1).strftime('%b %Y')
+    except ValueError: return f"Invalid Date ({year}-{month})"
+
+def parse_and_classify_paths(filepath):
+    log_message("info", f"Phase 1: Parsing and Classifying URLs from '{filepath}'...")
+    parsed_files, skipped_count = [], 0
+    patterns = {'PREFIX_GEO_DATE': re.compile(r'^([A-Z_]{2,})((?:[A-Z]{2})|(?:BR))(\d{2,8})$', re.IGNORECASE)}
+    with open(filepath, 'r', encoding='utf-8') as f: lines = f.readlines()
+    for line in tqdm(lines, desc="Parsing URLs"):
+        url = line.strip()
+        if not url: continue
+        if any(ex_path in url.upper() for ex_path in EXCLUSION_PATH_KEYWORDS):
+            skipped_count += 1; continue
+        path = urlparse(url).path
+        directory, filename = os.path.split(path)
+        name_part, extension = os.path.splitext(filename)
+        path_upper, path_type = path.upper(), 'Primary'
+        if any(keyword in path_upper for keyword in AUXILIARY_PATH_KEYWORDS): path_type = 'Auxiliary'
+        file_info = {'url': url, 'directory': directory, 'filename': filename, 'extension': extension.lower(), 'path_components': [comp for comp in directory.split('/') if comp], 'path_type': path_type}
+        if file_info['extension'] in DATA_EXTENSIONS and path_type == 'Primary':
+            for pattern_name, pattern in patterns.items():
+                match = pattern.match(name_part)
+                if match:
+                    file_info.update({'pattern_name': pattern_name, 'series_prefix': match.group(1).upper(), 'geo_code': match.group(2).upper(), 'date_code': match.group(3)})
+                    break
+        parsed_files.append(file_info)
+    log_message("info", f"-> Parsed {len(lines)} total URLs. Skipped {skipped_count} paths. Kept {len(parsed_files)} for analysis.")
+    return pd.DataFrame(parsed_files)
+
+def validate_and_consolidate_series(df):
+    log_message("info", "\nPhase 2 & 3: Validating Patterns and Consolidating Series...")
+    df_data = df[df['pattern_name'].notna()].copy()
+    initial_series, validated_files_indices = {}, []
+    for directory, group in tqdm(df_data.groupby('directory'), desc="Validating Patterns"):
+        if len(group) >= MIN_FILES_FOR_PATTERN_VALIDATION:
+            validated_files_indices.extend(group.index)
+    df_validated = df.loc[list(set(validated_files_indices))].copy()
+    log_message("info", f"-> {len(df_validated)} files passed relational pattern validation.")
+    for prefix, group in tqdm(df_validated.groupby('series_prefix'), desc="Initial Consolidation"):
+        unique_geo_codes = set(group['geo_code'].unique())
+        is_state_partitioned = len(unique_geo_codes.intersection(UF_CODES)) >= MIN_UF_COUNT_FOR_STATE_VALIDATION
+        is_nation_wide = 'BR' in unique_geo_codes
+        partition_type = "Nation-Wide" if is_nation_wide else "State-Partitioned" if is_state_partitioned else "Unknown"
+        if is_state_partitioned and is_nation_wide: partition_type = "Mixed-Partition"
+        if partition_type != "Unknown":
+            date_codes_4_digit = group[group['date_code'].str.len() == 4]['date_code']
+            date_format = 'YY'
+            if not date_codes_4_digit.empty and len(date_codes_4_digit) > len(group) / 2:
+                try:
+                    valid_months = date_codes_4_digit.str[2:].astype(int).between(1, 12, inclusive="both")
+                    if valid_months.mean() > 0.8: date_format = 'YYMM'
+                    else: date_format = 'YYYY' if date_codes_4_digit.str[:2].astype(int).between(19, 20, inclusive="both").all() else 'YY'
+                except: date_format = 'YY'
+            group = group.copy()
+            group['normalized_date'] = group['date_code'].apply(lambda x: normalize_datecode(x, date_format))
+            min_date, max_date = group['normalized_date'].min(), group['normalized_date'].max()
+            initial_series[prefix] = {'partition_type': partition_type, 'time_range_str': f"{format_normalized_date(min_date)} to {format_normalized_date(max_date)}", 'raw_time_range': (min_date, max_date), 'date_format': date_format, 'validated_pattern': group['pattern_name'].iloc[0], 'geo_coverage': sorted(list(unique_geo_codes)), 'file_count': len(group), 'source_paths': sorted(list(group['directory'].unique())), 'file_samples': group['filename'].head(10).tolist(), 'associated_pdfs': [], 'df_group': group}
+    log_message("info", f"-> Initially consolidated into {len(initial_series)} series.")
+    log_message("info", "\nPhase 3.5: Merging similar series (e.g., ACBI and ACBIO)...")
+    final_series = {}
+    merged_prefixes = set()
+    sorted_prefixes = sorted(initial_series.keys())
+    for prefix in tqdm(sorted_prefixes, desc="Merging Series"):
+        if prefix in merged_prefixes: continue
+        choices = [p for p in sorted_prefixes if p > prefix]
+        if not choices:
+            final_series[prefix] = initial_series[prefix]
+            continue
+        match_result = process.extractOne(prefix, choices, scorer=fuzz.ratio)
+        if match_result:
+            best_match, best_score, _ = match_result
+            if best_score >= SERIES_MERGE_THRESHOLD:
+                log_message("debug", f"  -> Merging '{best_match}' into '{prefix}' (Score: {best_score})", to_console=False)
+                merged_prefixes.add(best_match)
+                original_series, matched_series = initial_series[prefix], initial_series[best_match]
+                combined_group = pd.concat([original_series['df_group'], matched_series['df_group']])
+                min_date, max_date = combined_group['normalized_date'].min(), combined_group['normalized_date'].max()
+                final_series[prefix] = {
+                    'partition_type': 'Mixed-Partition', 'time_range_str': f"{format_normalized_date(min_date)} to {format_normalized_date(max_date)}",
+                    'raw_time_range': (min_date, max_date), 'date_format': original_series['date_format'],
+                    'validated_pattern': original_series['validated_pattern'], 'geo_coverage': sorted(list(set(original_series['geo_coverage']) | set(matched_series['geo_coverage']))),
+                    'file_count': original_series['file_count'] + matched_series['file_count'], 'source_paths': sorted(list(set(original_series['source_paths']) | set(matched_series['source_paths']))),
+                    'file_samples': original_series['file_samples'], 'associated_pdfs': []
+                }
+            else:
+                final_series[prefix] = initial_series[prefix]
+        else:
+            final_series[prefix] = initial_series[prefix]
+    for series in final_series.values(): series.pop('df_group', None)
+    log_message("info", f"-> Final count after merging: {len(final_series)} data series.")
+    return final_series
+
+def infer_path_semantics(series_profiles, df):
+    log_message("info", "\nPhase 4: Inferring Path Semantics...")
+    df_data = df[df['series_prefix'].isin(series_profiles.keys())].copy()
+    for series_name, series_info in tqdm(series_profiles.items(), desc="Inferring Path Semantics"):
+        series_info['path_semantics'] = {}
+        global_max_date = series_info['raw_time_range'][1]
+        date_format = series_info.get('date_format', 'YYMM')
+        for path in series_info['source_paths']:
+            path_files = df_data[(df_data['series_prefix'] == series_name) & (df_data['directory'] == path)]
+            if path_files.empty: continue
+            path_max_date = path_files['date_code'].apply(lambda x: normalize_datecode(x, date_format)).max()
+            tag = '[Primary]'
+            if any(keyword in path.upper() for keyword in STAGING_PATH_KEYWORDS): tag = '[Staging]'
+            elif date_format == 'YYMM' and (global_max_date > 0 and path_max_date > 0 and global_max_date - path_max_date > 500): tag = '[Legacy Archive]'
+            elif date_format == 'YY' and (global_max_date > 0 and path_max_date > 0 and global_max_date - path_max_date > 5): tag = '[Legacy Archive]'
+            series_info['path_semantics'][path] = tag
+    log_message("info", "-> Path semantics inference complete.")
+    return series_profiles
+
+def associate_pdfs(validated_series, df):
+    log_message("info", "\nPhase 5: Associating PDF Documentation...")
+    df_pdfs = df[df['extension'] == '.pdf'].copy()
+    for series_name, series_info in tqdm(validated_series.items(), desc="Associating PDFs"):
+        log_message("debug", f"\n-- Searching PDFs for series: '{series_name}' --", to_console=False)
+        candidate_pdfs, data_path_components = [], series_info['source_paths'][0].split('/')[1:]
+        for _, pdf_row in df_pdfs.iterrows():
+            pdf_path_components = pdf_row['path_components']
+            common_ancestor_len = sum(1 for d1, d2 in zip(data_path_components, pdf_path_components) if d1 == d2)
+            tree_distance = (len(data_path_components) - common_ancestor_len) + (len(pdf_path_components) - common_ancestor_len)
+            if tree_distance <= 4:
+                pdf_name_no_ext = os.path.splitext(pdf_row['filename'])[0].lower()
+                series_context_string = f"{series_name} {' '.join(data_path_components[-2:])}".lower()
+                pdf_context_string = f"{pdf_name_no_ext} {' '.join(pdf_path_components[-2:])}".lower()
+                fuzzy_name_score = fuzz.partial_ratio(series_name.lower(), pdf_name_no_ext)
+                fuzzy_path_score = fuzz.token_set_ratio(series_context_string, pdf_context_string)
+                keyword_bonus = KEYWORD_BONUS if any(kw in pdf_name_no_ext for kw in PDF_KEYWORDS) else 0
+                proximity_score = max(0, 100 - (tree_distance * 20))
+                relevance_score = (proximity_score * WEIGHT_PROXIMITY) + (fuzzy_name_score * WEIGHT_FUZZY_NAME) + (fuzzy_path_score * WEIGHT_FUZZY_PATH) + keyword_bonus
+                log_message("debug", f"  - Candidate: {pdf_row['filename']} | TreeDist:{tree_distance} | ProxScore:{proximity_score:.0f} | NameScore:{fuzzy_name_score:.0f} | PathScore:{fuzzy_path_score:.0f} | Bonus:{keyword_bonus} | FINAL SCORE: {relevance_score:.1f}", to_console=False)
+                if relevance_score >= PDF_RELEVANCE_THRESHOLD:
+                    log_message("debug", "    -> ACCEPTED", to_console=False)
+                    candidate_pdfs.append({'url': pdf_row['url'], 'score': int(relevance_score)})
+        series_info['associated_pdfs'] = sorted(candidate_pdfs, key=lambda x: x['score'], reverse=True)
+    log_message("info", "-> PDF association complete.")
+    return validated_series
+
+def log_detailed_report(final_data):
+    """Logs the detailed, structured report to the log file."""
+    log_message("info", "\n\n" + "="*40, to_console=False)
+    log_message("info", "      DATASUS FTP DETAILED REPORT", to_console=False)
+    log_message("info", "="*40, to_console=False)
+    for series_name in sorted(final_data.keys()):
+        info = final_data[series_name]
+        log_message("info", f"\n\n## Data Series: {series_name}", to_console=False)
+        log_message("info", f"  - Validated Pattern: {info.get('validated_pattern', 'N/A')}", to_console=False)
+        log_message("info", f"  - Partition Type: {info['partition_type']}", to_console=False)
+        log_message("info", f"  - File Count: {info['file_count']}", to_console=False)
+        log_message("info", f"  - Time Range: {info['time_range_str']}", to_console=False)
+        log_message("info", f"  - Geo Coverage ({len(info['geo_coverage'])} codes): {', '.join(info['geo_coverage'])}", to_console=False)
+        log_message("info", "\n  Associated Documentation (Relevance Score):", to_console=False)
+        if info['associated_pdfs']:
+            for pdf in info['associated_pdfs']: log_message("info", f"    - [{pdf['score']}] {pdf['url']}", to_console=False)
+        else: log_message("info", "    - None found.", to_console=False)
+        log_message("info", "\n  Discovered at Paths (inferred type):", to_console=False)
+        if 'path_semantics' in info:
+            for path, tag in info['path_semantics'].items(): log_message("info", f"    - {tag} {path}/", to_console=False)
+        else: log_message("info", "    - No path semantics inferred.", to_console=False)
+        log_message("info", "\n  File Samples:", to_console=False)
+        for sample in info['file_samples']: log_message("info", f"    - {sample}", to_console=False)
+
+def generate_summary(final_data):
+    """Prints a high-level, rich but compact summary to the console."""
+    summary_lines = ["\n\n" + "="*80, " " * 28 + "EXECUTIVE SUMMARY", "="*80]
+    total_series = len(final_data)
+    if total_series == 0:
+        summary_lines.append("\nNo data series were successfully validated.")
+    else:
+        partition_counts = defaultdict(int)
+        series_with_docs = sum(1 for info in final_data.values() if info['associated_pdfs'])
+        largest_series = sorted(final_data.items(), key=lambda item: item[1]['file_count'], reverse=True)
+        for info in final_data.values(): partition_counts[info['partition_type']] += 1
+        summary_lines.append(f"\nDiscovery complete. Found {total_series} distinct data series.")
+        summary_lines.append("\n--- Breakdown by Partition Type ---")
+        for p_type, count in partition_counts.items(): summary_lines.append(f"  - {p_type:<17}: {count} series")
+        summary_lines.append("\n--- Documentation Status ---")
+        summary_lines.append(f"  - Series with PDFs found: {series_with_docs} / {total_series}")
+        
+        summary_lines.append("\n" + "-"*80)
+        summary_lines.append(" " * 22 + "CATALOG OF IDENTIFIED DATA SERIES")
+        summary_lines.append("-" * 80)
+        summary_lines.append(f"{'SERIES':<12} | {'FILES':>7} | {'PARTITION':<17} | {'TIME RANGE':<25} | {'DOCS'}")
+        summary_lines.append(f"{'-'*12} | {'-'*7} | {'-'*17} | {'-'*25} | {'-'*4}")
+        
+        for series_name in sorted(final_data.keys()):
+            info = final_data[series_name]
+            docs_status = "[Yes]" if info['associated_pdfs'] else "[No]"
+            summary_lines.append(f"{series_name:<12} | {info['file_count']:>7,} | {info['partition_type']:<17} | {info['time_range_str']:<25} | {docs_status}")
+
+    print("\n".join(summary_lines))
+    log_entries.extend(summary_lines)
+
+# --- FIX: New helper function to convert numpy types to native Python types ---
+class NumpyJSONEncoder(json.JSONEncoder):
+    """ A JSONEncoder that can handle NumPy-specific data types. """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyJSONEncoder, self).default(obj)
+
+def save_results_as_json(final_data, filepath):
+    """Saves the final structured data to a JSON file for downstream use."""
+    log_message("info", f"\nPhase 7: Saving structured results to '{filepath}'...")
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            # Use the custom encoder by passing it to the `cls` argument
+            json.dump(final_data, f, ensure_ascii=False, indent=4, cls=NumpyJSONEncoder)
+        log_message("info", "-> Successfully saved JSON catalog.")
+    except Exception as e:
+        log_message("error", f"-> Failed to save JSON catalog. Error: {e}")
+
+def save_log_file():
+    with open(LOG_FILE, 'w', encoding='utf-8') as f: f.write("\n".join(log_entries))
+    print(f"\n\nFull diagnostic log saved to '{LOG_FILE}'")
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    if not os.path.exists(INPUT_FILE):
+        print(f"FATAL ERROR: Input file '{INPUT_FILE}' not found.")
+    else:
+        master_df = parse_and_classify_paths(INPUT_FILE)
+        validated_data = validate_and_consolidate_series(master_df)
+        series_with_semantics = infer_path_semantics(validated_data, master_df)
+        final_results = associate_pdfs(series_with_semantics, master_df)
+        
+        log_detailed_report(final_results)
+        generate_summary(final_results)
+        save_results_as_json(final_results, JSON_OUTPUT_FILE)
+        save_log_file()
+
+# %%
+import os
+import urllib.request
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm.notebook import tqdm
+from collections import defaultdict
+
+# --- Configuration ---
+INPUT_FILE = 'link_ftp.txt'
+OUTPUT_FOLDER = 'downloaded_pdfs'
+# Set the number of simultaneous downloads. 50 is a safe and powerful starting point.
+MAX_WORKERS = 50
+
+def download_single_pdf(url, output_dir):
+    """
+    Worker function executed by each thread. Downloads a single PDF.
+    Handles filename collisions by renaming duplicates.
+    Returns the original URL, the final saved filename, and a success/error status message.
+    """
+    try:
+        # Get the base filename from the URL
+        filename = os.path.basename(urlparse(url).path)
+        destination_path = os.path.join(output_dir, filename)
+
+        # --- New: Handle Duplicate Filenames ---
+        counter = 1
+        name_part, extension = os.path.splitext(filename)
+        while os.path.exists(destination_path):
+            # If file already exists, create a new name like "Manual (1).pdf"
+            new_filename = f"{name_part} ({counter}){extension}"
+            destination_path = os.path.join(output_dir, new_filename)
+            counter += 1
+        
+        # Download the file to the unique destination path
+        urllib.request.urlretrieve(url, destination_path)
+        
+        # Return the final filename it was saved as
+        final_filename = os.path.basename(destination_path)
+        return url, final_filename, "Success"
+    except Exception as e:
+        return url, None, f"ERROR: {e}"
+
+def generate_pdf_summary(successful_downloads):
+    """
+    Generates and prints a compact summary of downloaded PDFs, grouped by directory.
+    """
+    print("\n\n" + "="*40)
+    print("      DOWNLOADED PDF SUMMARY")
+    print("="*40)
+
+    if not successful_downloads:
+        print("No PDFs were successfully downloaded.")
+        return
+
+    # Group PDFs by their original parent directory
+    grouped_pdfs = defaultdict(list)
+    for download_info in successful_downloads:
+        original_url = download_info['url']
+        saved_filename = download_info['saved_as']
+        
+        parent_directory = os.path.dirname(urlparse(original_url).path)
+        grouped_pdfs[parent_directory].append(saved_filename)
+
+    # Print the grouped summary
+    for directory, files in sorted(grouped_pdfs.items()):
+        print(f"\n📁 Directory: {directory}/")
+        for filename in sorted(files):
+            print(f"  - {filename}")
+
+
+def download_all_pdfs_parallel(link_file, output_dir):
+    """
+    Finds all PDF links in a file, downloads them in parallel, and prints a summary.
+    """
+    # 1. Ensure the output directory exists
+    if not os.path.exists(output_dir):
+        print(f"Creating output directory: '{output_dir}'")
+        os.makedirs(output_dir)
+
+    # 2. Read the input file and filter for PDF links
+    print(f"Reading '{link_file}' to find all PDF links...")
+    pdf_links = []
+    try:
+        with open(link_file, 'r', encoding='utf-8') as f:
+            pdf_links = [line.strip() for line in f if line.strip().lower().endswith('.pdf')]
+    except FileNotFoundError:
+        print(f"FATAL ERROR: Input file '{link_file}' not found.")
+        return
+
+    if not pdf_links:
+        print("No PDF links were found in the file.")
+        return
+
+    print(f"Found {len(pdf_links)} PDF links. Starting parallel download with {MAX_WORKERS} workers...")
+
+    # 3. Use ThreadPoolExecutor to download files in parallel
+    successful_downloads = []
+    fail_count = 0
+    
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_url = {executor.submit(download_single_pdf, url, output_dir): url for url in pdf_links}
+        
+        for future in tqdm(as_completed(future_to_url), total=len(pdf_links), desc="Downloading PDFs"):
+            url = future_to_url[future]
+            try:
+                original_url, saved_as, status = future.result()
+                if status == "Success":
+                    successful_downloads.append({'url': original_url, 'saved_as': saved_as})
+                else:
+                    fail_count += 1
+                    print(f"\nFailed to download {url}: {status}")
+            except Exception as e:
+                fail_count += 1
+                print(f"\nAn exception occurred for {url}: {e}")
+
+    print("\n\n--- Download Complete ---")
+    print(f"Successfully downloaded: {len(successful_downloads)} files")
+    print(f"Failed to download:    {fail_count} files")
+    print(f"All downloaded PDFs are in the '{output_dir}' folder.")
+    
+    # 4. Generate and print the new compact summary
+    generate_pdf_summary(successful_downloads)
+
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    download_all_pdfs_parallel(INPUT_FILE, OUTPUT_FOLDER)
+
+# %% [markdown]
+# 
+# 
+# ### Definitive DATASUS Series Classification (Based on Detailed Logs)
+# 
+# | Series | Inferred System & Description | Evidence & Reasoning |
+# | :--- | :--- | :--- |
+# | **ACBI** | **SINAN** - **Ac**idente com Animais **Pe**çonhentos (Accident with Venomous Animals) | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> A web search for "SINAN ACBI" confirms this is a legacy code for accidents with venomous animals, now likely superseded by `ANIM`. |
+# | **ACBIO** | **SINAN** - **Ac**idente de Trabalho com Material **Bio**lógico (Work Accident with Biological Material) | **Path:** `/uploads/SINAN/Outrosarquivos/Migracao/SINAN/AcidenteBio/Bases/` <br> The path explicitly names "AcidenteBio," directly confirming the meaning. |
+# | **ACF** | **SIA/SUS** - **A**companhamento do **C**rescimento e Desenvolvimento (Growth and Development Monitoring) | **Path:** `/dissemin/publicos/SIASUS/200801_/Dados/` <br> `ACF` is a known procedure group code within SIA/SUS related to child health monitoring. |
+# | **ACGR** | **SINAN** - **Ac**idente de Trabalho **Gr**ave (Severe Work Accident) | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> Given the context of `ACGRA`, this is the most logical interpretation for a SINAN dataset. |
+# | **ACGRA** | **SINAN** - **Ac**idente de Trabalho **Gra**ve (Severe Work Accident) | **Path:** `/uploads/SINAN/Outrosarquivos/Migracao/SINAN/AcidenteGrave/Bases/` <br> The path explicitly names "AcidenteGrave," confirming the meaning. |
+# | **AD, AM, AQ, AR, ATD, BI**| **SIA/SUS** - Outpatient Production Data | **Path:** `/dissemin/publicos/SIASUS/200801_/Dados/` <br> These are all tables from the Outpatient Information System (SIA/SUS). The two-letter codes represent different types of outpatient forms/procedures (e.g., `AD` - Autorização de Internação Hospitalar (obsolete usage), `AM` - Ambulatorial, `ATD` - Atendimento Domiciliar, `BI` - Boletim de Internação). The script correctly associated `BI` and `SAD` with the `Informe_Tecnico_SIASUS.pdf`. |
+# | **AIDA, AIDC**| **SINAN** - AIDS (Acquired Immunodeficiency Syndrome) | **Path:** `/dissemin/publicos/SINAN/DADOS/PRELIM/` <br> These are older codes for AIDS, likely `AIDA` for Adults and `AIDC` for Children, now superseded by the `HIVA` and `HIVC` series. |
+# | **ANIM** | **SINAN** - Acidentes por **Anim**ais Peçonhentos (Accidents by Venomous Animals) | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> This is the primary SINAN system for notifiable accidents involving venomous animals (snakes, spiders, scorpions). |
+# | **ANTR** | **SINAN** - Acidente de Trabalho com **Antr**az (Anthrax Work Accident) | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> This is a rare event but a specific notifiable disease in SINAN related to bioterroism/work exposure. |
+# | **BOTU, CANC, COLE, COQU**| **SINAN** - Notifiable Diseases | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> Standard SINAN datasets for **Botu**lism, **Canc**er (Infant-Juvenile), **Cóle**ra (Cholera), and **Coqu**eluche (Whooping Cough). |
+# | **CC, HC** | **SISCOLO** (Cervical Cancer Information System) | **Path:** `/dissemin/publicos/siscan/SISCOLO4/DADOS/` <br> The path points directly to SISCOLO. `CC` stands for **C**itopatologia **C**ervical. `HC` likely refers to **H**istopatológico **C**ervical (Cervical Histopathology). |
+# | **CH** | **SIH/SUS** - **C**omplemento de **H**ospitalização (Hospitalization Complement) | **Path:** `/dissemin/publicos/SIHSUS/200801_/Dados/` <br> The `IT_SIHSUS_1603.pdf` is the relevant documentation for this Hospital Information System data. `CH` files contain complementary values for AIH (hospital admission authorizations). |
+# | **CHAG, CHIK, DENG, ZIKA** | **SINAN** & **e-SUS Notifica** | **Paths:** `/SINAN/DADOS/`, `/Dados_Abertos/SINAN/`, `/ESUSNOTIFICA/DOCS/` <br> Log files confirm these are all notifiable diseases tracked via SINAN, with Chagas also having specific documentation under the modern e-SUS Notifica system. The shared `DIC_DADOS_CHIKUNGUNYA.pdf` for Chik, Dengue, and Zika confirms they share a data structure. |
+# | **CIHA** | **CIHA** (Hospital and Outpatient Information Communication) | **Path:** `/dissemin/publicos/CIHA/201101_/Dados/` <br> **Direct Evidence**: Confirmed by `Layout_Arquivos_CIHA.pdf`. |
+# | **CM, HM, MM** | **SISMAMA** (Breast Cancer Information System) | **Path:** `/dissemin/publicos/siscan/SISMAMA/DADOS/` <br> The path points directly to SISMAMA. The codes stand for **C**itologia **M**amária, **H**istopatológico de **M**ama, and **M**amografia **M**amária. |
+# | **CPNI, DPNI** | **PNI** (National Immunization Program) | **Path:** `/dissemin/publicos/PNI/DADOS/` <br> **Direct Evidence**: Confirmed by multiple PDFs in `/PNI/DOCS/`. `CPNI` contains coverage data, while `DPNI` contains applied doses data. |
+# | **CR** | **CIH** (Older version) | **Path:** `/dissemin/publicos/CIH/200801_201012/Dados/` <br> This is an older, now discontinued, dataset from the CIH system. |
+# | **DC, EQ, PF, SR, ST, EE, EF, EP, GM, HB, IN, LT, RC** | **CNES** (National Registry of Health Facilities) | **Path:** `/dissemin/publicos/CNES/200508_/Dados/` <br> The log confirms all these series reside in CNES subdirectories. They represent different data tables within the registry: **DC**-Equipamentos, **EQ**-Equipes, **PF**-Profissionais, **ST**-Estabelecimentos, **LT**-Leitos, etc. The `IT_CNES_1706.pdf` confirms the system. |
+# | **DERM, DIFT**| **SINAN** - Notifiable Diseases | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> Standard SINAN datasets for **Derm**atoses related to work and **Dift**eria (Diphtheria). |
+# | **DN, DNR** | **SINASC** (Live Birth Information System) | **Path:** `/dissemin/publicos/SINASC/.../Dados/DNRES/` <br> **Direct Evidence**: Confirmed by `Estrutura_SINASC_...` PDFs. `DNR` is the older dataset (94-95). The failed download of the municipalities table reinforces this. |
+# | **DO, DOR** | **SIM** (Mortality Information System) | **Path:** `/dissemin/publicos/SIM/CID10/DORES/` & `/CID9/DORES/` <br> **Direct Evidence**: Confirmed by `Estrutura_SIM_...` PDFs. `DOR` is the older dataset using CID-9. |
+# | **ER, RD, RJ, SP** | **SIH/SUS** (Hospital Information System) | **Path:** `/dissemin/publicos/SIHSUS/.../Dados/` <br> The most voluminous datasets on the server. `RD` is the main "Reduced" dataset containing core hospitalization info. `SP` and `RJ` are state-specific extracts. `ER` is a specific file for Emergency Room AIH. `IT_SIHSUS_1603.pdf` is the documentation. |
+# | **ESPO, ESQU, EXAN, FMAC, FTIF** | **SINAN** - Notifiable Diseases | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> Standard SINAN datasets for **Espo**rotricose, **Esqu**istossomose, **Exan**temáticas (e.g. Measles/Rubella), Febre **Mac**ulosa, and Febre **Tif**oide. `EXAN` is also in a separate definition folder, confirming its identity. |
+# | **HANS** | **SINAN** - Hansen's Disease (Leprosy) | **Path:** `/SINAN/DADOS/` & `/uploads/.../Hanseniase/Base/` <br> The paths and the failed download of a `Hanseniase/Notas.pdf` confirm this is the SINAN Hansen's disease dataset. The time range up to `3316` is a clear data error in the file naming. |
+# | **IEXO** | **SINAN** - Intoxicação **Exó**gena (Exogenous Poisoning) | **Path:** `/uploads/SINAN/Outrosarquivos/Migracao/SINAN/iexogena/bases/` <br> The path explicitly names "iexogena," confirming the meaning. |
+# | **MT** | **SIH/SUS** - **M**édia e Alta Complexidade (Medium/High Complexity Procedures) | **Path:** `/dissemin/publicos/SIHSUS/Arquivos_MTBR/` <br> `MT` is a file for procedures classified as Medium and High Complexity within the hospital system. |
+# | **PA, PS, SAD** | **SIA/SUS** (Outpatient Information System) | **Path:** `/dissemin/publicos/SIASUS/.../Dados/` <br> `PA` is the main `Produção Ambulatorial` dataset. `PS` is `Procedimentos Sequenciais`. `SAD` is `Serviço de Atenção Domiciliar`. All are documented by `Informe_Tecnico_SIASUS_2019_07.pdf`. |
+# | **PCE** | **SISPCE** (Schistosomiasis Control Program Info System) | **Path:** `/dissemin/publicos/PCE/Dados/` <br> **Direct Evidence**: Confirmed by `DIC_DADOS_SISPCE_PCE-DG.pdf`. |
+# | **PN** | **SISPRENATAL** (Pre-Natal Care System) | **Path:** `/dissemin/publicos/SISPRENATAL/201201_/Dados/` <br> The path name directly identifies the system. `PN` stands for **P**ré-**N**atal. |
+# | **PO** | **Painel Oncologia** (Oncology Panel) | **Path:** `/dissemin/publicos/painel_oncologia/Dados/` <br> **Direct Evidence**: Confirmed by `Dicionario_Painel_Oncologia.pdf`. |
+# | **RESP** | **e-SUS Notifica** (Respiratory Disease Surveillance) | **Path:** `/dissemin/publicos/RESP/DADOS/` <br> **Direct Evidence**: The `DIC_DADOS_RESP.pdf` confirms this is the modern system for Severe Acute Respiratory Illness (SRAG). The multiple *failed* downloads from the older `/SINAN/Influenza_Carla/` directory show the legacy system's documentation is now missing. |
+# | **ROTA, SDTA, TETA, TETN, TOXC, TOXG, TUBE, TRAC, VARC, VIOL** | **SINAN** - Notifiable Diseases/Conditions | **Path:** `/dissemin/publicos/SINAN/DADOS/` <br> **Direct Evidence**: Confirmed by specific technical notes (`Nota_Tecnica_...`) for Rotavirus, DTA (Foodborne Illness), and Toxoplasmosis. The others are standard SINAN acronyms: Tetanus (Accidental/Neonatal), Tuberculosis, Trachoma, Varicella, and Interpersonal Violence. |
+# | **SIFA, SIFC, SIFG** | **SINAN** - Sífilis (Syphilis) | **Path:** `/dissemin/publicos/SINAN/DADOS/PRELIM/` <br> Standard SINAN modules for tracking Syphilis: **Síf**ilis **A**dquirida, **Síf**ilis **C**ongênita, and **Síf**ilis em **G**estantes. |
+# | **SRC** | **SINAN** - Síndrome da Rubéola Congênita (Congenital Rubella Syndrome) | **Path:** `/dissemin/publicos/SINAN/DADOS/PRELIM/` <br> A specific notifiable condition within SINAN. |
+
+
