@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from difflib import SequenceMatcher
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
 from typing import Any
 from urllib.parse import urlparse
@@ -12,19 +11,7 @@ from ...common.hashing import sha256_file
 from ...common.storage import ensure_directory
 from ...config import get_settings
 
-try:
-    from rapidfuzz import fuzz
-except ImportError:
-    class _FuzzFallback:
-        @staticmethod
-        def partial_ratio(left: str, right: str) -> float:
-            if not left and not right:
-                return 100.0
-            if not left or not right:
-                return 0.0
-            return round(SequenceMatcher(None, left, right).ratio() * 100, 2)
-
-    fuzz = _FuzzFallback()
+from rapidfuzz import fuzz
 
 from .heuristics import (
     KEYWORD_BONUS,
@@ -42,6 +29,13 @@ class PdfMatch:
     url: str
     score: float
     filename: str
+
+@dataclass(frozen=True)
+class PdfCandidateRow:
+    url: str
+    filename: str
+    extension: str
+    path_components: list[str]
 
 
 @dataclass(frozen=True)
@@ -69,7 +63,7 @@ def tree_distance(a_parts: list[str], b_parts: list[str]) -> int:
     return (len(a_parts) - common) + (len(b_parts) - common)
 
 
-def score_pdf_candidate(series_name: str, data_path_parts: list[str], pdf_entry: ManifestEntry) -> float:
+def score_pdf_candidate(series_name: str, data_path_parts: list[str], pdf_entry: Any) -> float:
     dist = tree_distance(data_path_parts, pdf_entry.path_components)
     if dist > 4:
         return -1.0
@@ -77,23 +71,53 @@ def score_pdf_candidate(series_name: str, data_path_parts: list[str], pdf_entry:
     series_context = f"{series_name} {' '.join(data_path_parts[-2:])}".lower()
     pdf_context = f"{pdf_name} {' '.join(pdf_entry.path_components[-2:])}".lower()
     fuzzy_name = fuzz.partial_ratio(series_name.lower(), pdf_name)
-    fuzzy_path = fuzz.partial_ratio(series_context, pdf_context)
+    fuzzy_path = fuzz.token_set_ratio(series_context, pdf_context)
     proximity = max(0, 100 - dist * 20)
     bonus = KEYWORD_BONUS if any(keyword in pdf_name for keyword in PDF_KEYWORDS) else 0
     return (WEIGHT_PROXIMITY * proximity) + (WEIGHT_FUZZY_NAME * fuzzy_name) + (WEIGHT_FUZZY_PATH * fuzzy_path) + bonus
 
 
-def associate_pdfs(series_name: str, source_paths: list[str], manifest_rows: list[ManifestEntry]) -> list[PdfMatch]:
+def build_pdf_manifest_rows(files: list[Any]) -> list[PdfCandidateRow]:
+    rows: list[PdfCandidateRow] = []
+    seen_urls: set[str] = set()
+    for item in files:
+        path = str(getattr(item, 'path', '') or '')
+        extension = str(getattr(item, 'extension', '') or '').lower()
+        if extension != '.pdf' or not path:
+            continue
+        url = f'ftp://ftp.datasus.gov.br{path}'
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        directory = str(getattr(item, 'directory', '') or PurePosixPath(path).parent)
+        filename = str(getattr(item, 'filename', '') or PurePosixPath(path).name)
+        rows.append(PdfCandidateRow(
+            url=url,
+            filename=filename,
+            extension='.pdf',
+            path_components=[part for part in directory.split('/') if part],
+        ))
+    return rows
+
+
+def associate_pdfs(series_name: str, source_paths: list[str], manifest_rows: list[Any]) -> list[PdfMatch]:
     if not source_paths:
         return []
-    data_path_parts = [part for part in source_paths[0].split("/") if part]
+    data_path_parts_list = [[part for part in path.split("/") if part] for path in source_paths if path]
+    if not data_path_parts_list:
+        return []
     matches: list[PdfMatch] = []
+    seen_urls: set[str] = set()
     for row in manifest_rows:
         if row.extension != ".pdf":
             continue
-        score = score_pdf_candidate(series_name, data_path_parts, row)
-        if score >= PDF_RELEVANCE_THRESHOLD:
-            matches.append(PdfMatch(url=row.url, score=round(score, 2), filename=row.filename))
+        score = max(score_pdf_candidate(series_name, data_path_parts, row) for data_path_parts in data_path_parts_list)
+        if score < PDF_RELEVANCE_THRESHOLD:
+            continue
+        if row.url in seen_urls:
+            continue
+        seen_urls.add(row.url)
+        matches.append(PdfMatch(url=row.url, score=round(score, 2), filename=row.filename))
     matches.sort(key=lambda item: item.score, reverse=True)
     return matches
 
@@ -119,11 +143,8 @@ def _candidate_local_paths(url: str, filename: str, doc_root: str | Path) -> lis
 def _extract_pdf_text(path: Path, *, max_chars: int) -> tuple[str | None, str]:
     try:
         from pypdf import PdfReader  # type: ignore
-    except ImportError:
-        try:
-            from PyPDF2 import PdfReader  # type: ignore
-        except ImportError:
-            return None, 'pdf_parser_unavailable'
+    except ImportError as exc:
+        raise RuntimeError('pypdf is required for PDF text extraction') from exc
     try:
         reader = PdfReader(str(path))
         chunks: list[str] = []

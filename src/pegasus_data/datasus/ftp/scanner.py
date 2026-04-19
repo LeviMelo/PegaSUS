@@ -20,6 +20,10 @@ _LIST_UNIX = re.compile(
     r'(?P<size>\d+)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+'
     r'(?P<timeyear>[\d:]{4,5})\s+(?P<name>.+)$'
 )
+_FILE_SUFFIX_HINTS = (
+    '.dbc', '.dbf', '.zip', '.gz', '.csv', '.json', '.xml',
+    '.pdf', '.txt', '.xls', '.xlsx', '.doc', '.docx',
+)
 _LOG = get_logger(__name__)
 
 
@@ -60,12 +64,7 @@ class DatasusFtpScanner:
         return normalized if normalized.startswith('/') else f'/{normalized}'
 
     def _directory_variants(self, directory: str) -> list[str]:
-        normalized = self._normalize_path(directory)
-        variants = [normalized]
-        relative = normalized.lstrip('/')
-        if relative:
-            variants.append(relative)
-        return variants
+        return [self._normalize_path(directory)]
 
     def _join_child(self, directory: str, child: str) -> str:
         if child.startswith('/'):
@@ -91,6 +90,7 @@ class DatasusFtpScanner:
                     else:
                         with self._cwd(ftp, candidate):
                             listing = ftp.mlsd()
+
                     rows: list[ScanEntry] = []
                     for name, facts in listing:
                         entry_type = facts.get('type')
@@ -108,9 +108,7 @@ class DatasusFtpScanner:
                             worker_id=-1,
                             error_flags=[],
                         ))
-                    if rows:
-                        return rows
-                    errors.append(f'{candidate}/{mode}: empty result')
+                    return rows
                 except Exception as exc:
                     errors.append(f'{candidate}/{mode}: {exc}')
         raise RuntimeError('MLSD failed: ' + '; '.join(errors))
@@ -126,6 +124,10 @@ class DatasusFtpScanner:
                             ftp.retrlines(command, raw_lines.append)
                     else:
                         ftp.retrlines(command, raw_lines.append)
+
+                    if not raw_lines:
+                        return []
+
                     rows: list[ScanEntry] = []
                     parsed_any = False
                     for line in raw_lines:
@@ -146,17 +148,26 @@ class DatasusFtpScanner:
                             worker_id=-1,
                             error_flags=[],
                         ))
-                    if rows:
+                    if parsed_any:
                         return rows
-                    if raw_lines and not parsed_any:
-                        errors.append(f'{candidate}/{mode}: unparseable LIST rows')
-                    else:
-                        errors.append(f'{candidate}/{mode}: empty result')
+                    errors.append(f'{candidate}/{mode}: unparseable LIST rows')
                 except Exception as exc:
                     errors.append(f'{candidate}/{mode}: {exc}')
         raise RuntimeError('LIST failed: ' + '; '.join(errors))
 
-    def _probe_entry_type(self, ftp: ftplib.FTP, full_path: str) -> str | None:
+    def _infer_entry_type_hint(self, child_name: str) -> str | None:
+        name = PurePosixPath(child_name).name.lower()
+        if not name or name in {'.', '..'}:
+            return None
+        if any(name.endswith(suffix) for suffix in _FILE_SUFFIX_HINTS):
+            return 'file'
+        return None
+
+    def _probe_entry_type(self, ftp: ftplib.FTP, full_path: str, *, child_name: str | None = None) -> str | None:
+        hinted = self._infer_entry_type_hint(child_name or PurePosixPath(full_path).name)
+        if hinted is not None:
+            return hinted
+
         original = ftp.pwd()
         try:
             ftp.cwd(full_path)
@@ -179,6 +190,7 @@ class DatasusFtpScanner:
                     else:
                         with self._cwd(ftp, candidate):
                             children = ftp.nlst()
+
                     rows: list[ScanEntry] = []
                     for child in children:
                         name = PurePosixPath(child).name if '/' in child else child
@@ -189,7 +201,7 @@ class DatasusFtpScanner:
                             parent_directory=self._normalize_path(directory),
                             child_name=name,
                             full_path=full_path,
-                            entry_type=self._probe_entry_type(ftp, full_path),
+                            entry_type=self._probe_entry_type(ftp, full_path, child_name=name),
                             size=None,
                             modified=None,
                             listing_method=f'NLST:{mode}',
@@ -197,9 +209,7 @@ class DatasusFtpScanner:
                             worker_id=-1,
                             error_flags=['entry_type_probed'],
                         ))
-                    if rows:
-                        return rows
-                    errors.append(f'{candidate}/{mode}: empty result')
+                    return rows
                 except Exception as exc:
                     errors.append(f'{candidate}/{mode}: {exc}')
         raise RuntimeError('NLST failed: ' + '; '.join(errors))
@@ -208,21 +218,17 @@ class DatasusFtpScanner:
         errors: list[str] = []
         for method in (self._mlsd_entries, self._list_entries, self._nlst_entries):
             try:
-                rows = method(ftp, directory)
+                return method(ftp, directory)
             except Exception as exc:
                 errors.append(f'{method.__name__}: {exc}')
-                continue
-            if rows:
-                return rows
-            errors.append(f'{method.__name__}: empty result')
         raise RuntimeError(f'Could not list directory: {directory} ({"; ".join(errors)})')
 
     def _load_or_initialize_state(self, checkpoint: Path | None) -> ScanState:
         if checkpoint and checkpoint.exists():
             state = ScanState.from_file(checkpoint)
-            if not state.pending_dirs and state.entries_written == 0:
+            if not state.pending_dirs and not state.in_progress_dirs and state.entries_written == 0:
                 _LOG.warning(
-                    'checkpoint %s has zero entries and no pending directories; restarting scan from %s',
+                    'checkpoint %s has zero entries and no pending/in-progress directories; restarting scan from %s',
                     checkpoint,
                     self.base_path,
                 )
@@ -234,28 +240,57 @@ class DatasusFtpScanner:
         stop_token = object()
         out = ensure_parent(output_path)
         checkpoint = Path(checkpoint_path) if checkpoint_path else None
-        state = self._load_or_initialize_state(checkpoint)
+
+        if append:
+            state = self._load_or_initialize_state(checkpoint)
+        else:
+            state = ScanState(pending_dirs=[self.base_path])
+            if out.exists():
+                out.unlink()
+            if checkpoint and checkpoint.exists():
+                checkpoint.unlink()
+
         pending: queue.Queue[object] = queue.Queue()
-        for item in state.pending_dirs or [self.base_path]:
-            pending.put(self._normalize_path(str(item)))
-        visited_lock = threading.Lock()
+        seed_dirs: list[str] = []
+        seen_seed: set[str] = set()
+        for item in list(state.pending_dirs) + sorted(state.in_progress_dirs):
+            normalized = self._normalize_path(str(item))
+            if normalized not in seen_seed:
+                seen_seed.add(normalized)
+                seed_dirs.append(normalized)
+        if not seed_dirs:
+            seed_dirs = [self.base_path]
+        for item in seed_dirs:
+            pending.put(item)
+
         output_lock = threading.Lock()
         state_lock = threading.Lock()
-        started_fresh = not append
-        if started_fresh and out.exists():
-            out.unlink()
+        checkpoint_lock = threading.Lock()
+        last_checkpoint_entries = state.entries_written
 
         def flush_state() -> None:
             if checkpoint is None:
                 return
             with state_lock:
                 snapshot = ScanState(
-                    visited_dirs=set(state.visited_dirs),
+                    completed_dirs=set(state.completed_dirs),
+                    in_progress_dirs=set(state.in_progress_dirs),
                     pending_dirs=[item for item in list(pending.queue) if isinstance(item, str)],
                     errors=list(state.errors),
                     entries_written=state.entries_written,
                 )
             snapshot.save(checkpoint)
+
+        def maybe_flush_state() -> None:
+            nonlocal last_checkpoint_entries
+            if checkpoint is None:
+                return
+            with checkpoint_lock:
+                current_entries = state.entries_written
+                if current_entries - last_checkpoint_entries < 1000:
+                    return
+                last_checkpoint_entries = current_entries
+            flush_state()
 
         def worker(worker_id: int) -> None:
             ftp = self._connect()
@@ -266,34 +301,51 @@ class DatasusFtpScanner:
                         pending.task_done()
                         return
                     assert isinstance(directory, str)
-                    with visited_lock:
-                        if directory in state.visited_dirs:
+
+                    with state_lock:
+                        if directory in state.completed_dirs or directory in state.in_progress_dirs:
                             pending.task_done()
                             continue
-                        state.visited_dirs.add(directory)
+                        state.in_progress_dirs.add(directory)
+
                     try:
                         rows = self._list_directory(ftp, directory)
                     except Exception as exc:
                         _LOG.warning('scan listing failed for %s: %s', directory, exc)
                         with state_lock:
-                            state.errors.append({'directory': directory, 'worker_id': worker_id, 'error': str(exc)})
+                            state.in_progress_dirs.discard(directory)
+                            state.errors.append({
+                                'directory': directory,
+                                'worker_id': worker_id,
+                                'error': str(exc),
+                            })
                         pending.task_done()
+                        maybe_flush_state()
                         continue
+
                     local_lines: list[str] = []
+                    discovered_dirs: list[str] = []
                     for row in rows:
                         enriched = ScanEntry(**{**row.to_dict(), 'worker_id': worker_id})
                         local_lines.append(json.dumps(enriched.to_dict(), ensure_ascii=False))
                         if enriched.entry_type == 'dir':
-                            pending.put(enriched.full_path)
+                            discovered_dirs.append(self._normalize_path(enriched.full_path))
+
                     with output_lock:
                         with out.open('a', encoding='utf-8') as handle:
                             for line in local_lines:
                                 handle.write(line + '\n')
+
                     with state_lock:
+                        for child_dir in discovered_dirs:
+                            if child_dir not in state.completed_dirs and child_dir not in state.in_progress_dirs:
+                                pending.put(child_dir)
                         state.entries_written += len(local_lines)
+                        state.in_progress_dirs.discard(directory)
+                        state.completed_dirs.add(directory)
+
                     pending.task_done()
-                    if checkpoint and state.entries_written % 1000 == 0:
-                        flush_state()
+                    maybe_flush_state()
             finally:
                 try:
                     ftp.quit()
@@ -303,12 +355,22 @@ class DatasusFtpScanner:
         threads = [threading.Thread(target=worker, args=(idx,), daemon=True) for idx in range(self.connections)]
         for thread in threads:
             thread.start()
-        pending.join()
-        for _ in threads:
-            pending.put(stop_token)
-        for thread in threads:
-            thread.join()
-        if state.entries_written == 0:
+
+        interrupted = False
+        try:
+            pending.join()
+        except KeyboardInterrupt:
+            interrupted = True
+            _LOG.warning('scan interrupted by user; saving checkpoint')
+            flush_state()
+            raise
+        finally:
+            for _ in threads:
+                pending.put(stop_token)
+            for thread in threads:
+                thread.join()
+
+        if not interrupted and state.entries_written == 0:
             warning = {
                 'directory': self.base_path,
                 'worker_id': -1,
@@ -316,5 +378,6 @@ class DatasusFtpScanner:
             }
             _LOG.warning('%s', warning['error'])
             state.errors.append(warning)
+
         flush_state()
         return state

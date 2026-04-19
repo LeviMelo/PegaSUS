@@ -5,11 +5,11 @@ import re
 from pathlib import PurePosixPath
 from typing import Any
 
-STRUCTURED_DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".json"}
+STRUCTURED_DATA_EXTENSIONS = {".dbc", ".dbf", ".xml", ".csv", ".json", ".parquet"}
 WRAPPER_EXTENSIONS = {".zip", ".gz"}
 DATA_EXTENSIONS = STRUCTURED_DATA_EXTENSIONS | WRAPPER_EXTENSIONS
 PDF_KEYWORDS = {"manual", "dicionario", "leia-me", "layout", "estrutura", "dic_dados", "instrucoes"}
-AUXILIARY_PATH_KEYWORDS = {"TABELAS", "DOCS", "DOCUMENTOS", "TABWIN", "DOC"}
+AUXILIARY_PATH_KEYWORDS = {"TABELAS", "DOCS", "DOCUMENTOS", "TABWIN", "DOC", "AUXILIAR", "AUXILIARES"}
 EXCLUSION_PATH_KEYWORDS = {"/IBGE/"}
 STAGING_PATH_KEYWORDS = {"PRELIM", "HOMOL"}
 UF_CODES = {
@@ -75,6 +75,8 @@ def infer_primary_extension(path: str) -> str | None:
         return '.xml'
     if '/CSV/' in upper_path:
         return '.csv'
+    if '/PARQUET/' in upper_path:
+        return '.parquet'
     if suffixes:
         return suffixes[-1]
     return None
@@ -90,6 +92,8 @@ def infer_format_family(path: str) -> str:
         return 'xml'
     if primary == '.csv':
         return 'csv'
+    if primary == '.parquet':
+        return 'parquet'
     if any(suffix in WRAPPER_EXTENSIONS for suffix in suffix_chain(path)):
         return 'archive'
     return 'unknown'

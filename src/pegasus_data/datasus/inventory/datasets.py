@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
-from ..discovery.docs import associate_pdfs
+from ..discovery.docs import associate_pdfs, build_pdf_manifest_rows
 from ..discovery.heuristics import (
     MIN_FILES_FOR_PATTERN_VALIDATION,
     classify_partition,
@@ -41,10 +40,11 @@ class DatasetFamily:
 
 def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dict[str, str] | None = None) -> list[DatasetFamily]:
     schema_signatures = schema_signatures or {}
+    primary_files = [item for item in files if item.path_type != 'Auxiliary']
+    pdf_rows = build_pdf_manifest_rows(files)
+
     by_key: dict[tuple[str | None, str | None], list[InventoryFile]] = defaultdict(list)
-    for item in files:
-        if item.path_type != 'Primary':
-            continue
+    for item in primary_files:
         key = (item.system_guess, item.series_prefix or infer_inner_candidate_name(item.filename))
         by_key[key].append(item)
 
@@ -60,18 +60,21 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
         path_semantics: dict[str, str] = {}
         if date_format and date_codes:
             normalized = [normalize_datecode(code, date_format) for code in date_codes]
-            time_range_display = f"{format_normalized_date(min(normalized))} to {format_normalized_date(max(normalized))}"
-            for directory in sorted({row.directory for row in rows}):
-                path_rows = [row for row in rows if row.directory == directory and row.date_code]
-                path_dates = [normalize_datecode(row.date_code, date_format) for row in path_rows]
+            min_date, max_date = min(normalized), max(normalized)
+            time_range_display = f"{format_normalized_date(min_date)} to {format_normalized_date(max_date)}"
+            rows_by_directory: dict[str, list[InventoryFile]] = defaultdict(list)
+            for row in rows:
+                if row.date_code:
+                    rows_by_directory[row.directory].append(row)
+            for directory in sorted(rows_by_directory):
+                path_rows = rows_by_directory[directory]
+                path_dates = [normalize_datecode(row.date_code, date_format) for row in path_rows if row.date_code]
                 if path_dates:
-                    path_semantics[directory] = classify_path_semantic(directory, global_max_date=max(normalized), path_max_date=max(path_dates), date_format=date_format)
+                    path_semantics[directory] = classify_path_semantic(directory, global_max_date=max_date, path_max_date=max(path_dates), date_format=date_format)
         files_for_family = sorted(row.path for row in rows)
+        source_paths = sorted({row.directory for row in rows})
         signatures = sorted({schema_signatures.get(path, '') for path in files_for_family if schema_signatures.get(path)})
-        docs = [match.__dict__ for match in associate_pdfs(prefix or (system_guess or 'UNKNOWN'), sorted({r.directory for r in rows}), [
-            type('ManifestLike', (), {'path': f.path, 'url': f'ftp://ftp.datasus.gov.br{f.path}', 'directory': f.directory, 'filename': f.filename, 'extension': f.extension, 'path_components': [p for p in f.directory.split('/') if p], 'source': 'datasus_ftp', 'scan_id': None, 'path_type': f.path_type, 'pattern_name': f.pattern_name, 'series_prefix': f.series_prefix, 'geo_code': f.geo_code, 'date_code': f.date_code, 'raw_listing_facts': None})
-            for f in files
-        ])]
+        docs = [match.__dict__ for match in associate_pdfs(prefix or (system_guess or 'UNKNOWN'), source_paths, pdf_rows)]
         family_id = f"{system_guess or 'UNKNOWN'}:{prefix or infer_inner_candidate_name(rows[0].filename)}"
         if signatures:
             family_id += f":s{len(signatures)}"
@@ -86,7 +89,7 @@ def build_dataset_families(files: list[InventoryFile], *, schema_signatures: dic
             file_count=len(rows),
             member_files=files_for_family,
             files=files_for_family,
-            source_paths=sorted({row.directory for row in rows}),
+            source_paths=source_paths,
             geo_coverage=geo_coverage,
             path_semantics=path_semantics,
             associated_docs=docs,

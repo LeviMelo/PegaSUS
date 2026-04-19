@@ -115,7 +115,16 @@ def _cmd_datasus_inventory(args: argparse.Namespace) -> None:
 
 
 def _cmd_datasus_datasets(args: argparse.Namespace) -> None:
-    files = inventory_from_scan_jsonl(args.input)
+    rows = list(read_jsonl(args.input))
+    if not rows:
+        write_json(args.output, [])
+        print(f'wrote 0 dataset families -> {args.output}')
+        return
+    if 'full_path' in rows[0]:
+        files = inventory_from_scan_jsonl(args.input)
+    else:
+        from .datasus.inventory.files import InventoryFile
+        files = [InventoryFile(**row) for row in rows]
     schema_signatures, _ = _profile_signature_map(args.profile_jsonl)
     datasets = build_dataset_families(files, schema_signatures=schema_signatures)
     write_json(args.output, [row.to_dict() for row in datasets])
