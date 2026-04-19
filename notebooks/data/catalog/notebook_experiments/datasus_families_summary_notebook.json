@@ -1,0 +1,39 @@
+{
+  "family_count": 126,
+  "families_by_system": {
+    "SINAN": 58,
+    "SIASUS": 15,
+    "SISCAN": 12,
+    "SIM": 10,
+    "CNES": 8,
+    "SIHSUS": 8,
+    "SINASC": 5,
+    "PNI": 2,
+    "CIH": 1,
+    "CIHA": 1,
+    "ESUSNOTIFICA": 1,
+    "IBGE": 1,
+    "PCE": 1,
+    "RESP": 1,
+    "SISPRENATAL": 1,
+    "painel_oncologia": 1
+  },
+  "families_by_partition_type": {
+    "Nation-Wide": 63,
+    "State-Partitioned": 36,
+    "Geo-Less": 18,
+    "Mixed-Partition": 9
+  },
+  "families_by_coverage_status": {
+    "nationwide": 63,
+    "complete_state_panel": 25,
+    "geo_less": 18,
+    "mixed_br_plus_27_ufs": 8,
+    "broad_state_panel": 5,
+    "partial_state_panel": 3,
+    "sparse_state_panel": 3,
+    "mixed_br_plus_19_ufs": 1
+  },
+  "families_with_docs": 126,
+  "families_without_docs": 0
+}

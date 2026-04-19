@@ -168,6 +168,8 @@ def normalize_datecode(date_code: str, date_format: str) -> int:
         return year * 100
     if date_format == "YYMM":
         year, month = divmod(number, 100)
+        if not 1 <= month <= 12:
+            return 0
         year = 2000 + year if year < 70 else 1900 + year
         return year * 100 + month
     if date_format == "YYYY":

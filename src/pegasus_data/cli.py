@@ -13,7 +13,7 @@ from .datasus.discovery.docs import build_family_document_registry
 from .datasus.discovery.manifest import parse_manifest_text, read_manifest_jsonl, write_manifest_jsonl
 from .datasus.fetch import download_plans, plan_family_candidate_downloads, select_family_candidates
 from .datasus.ftp import DatasusFtpScanner, diff_scan_outputs
-from .datasus.inventory import build_dataset_families, build_family_registry, inventory_from_scan_jsonl
+from .datasus.inventory import build_dataset_families, build_dataset_family_summary, build_family_registry, inventory_from_scan_jsonl
 from .datasus.profile import (
     build_family_similarity_report,
     build_variable_catalog,
@@ -30,6 +30,10 @@ from .datasus.translate import (
 from .sidra.catalog.schema import ensure_schema
 from .sidra.catalog.search import SearchArgs, search_tables, show_table
 from .sidra.values import fetch_and_normalize_values_sharded
+
+from .datasus.fetch.pdfs import build_pdf_audit, plan_pdf_downloads_from_scan
+from .datasus.inventory.audit import build_family_audit
+
 
 def _load_manifest_like(path: str, *, scan_id: str | None = None):
     return read_manifest_jsonl(path) if path.lower().endswith('.jsonl') else parse_manifest_text(path, scan_id=scan_id)
@@ -119,6 +123,9 @@ def _cmd_datasus_datasets(args: argparse.Namespace) -> None:
     if not rows:
         write_json(args.output, [])
         print(f'wrote 0 dataset families -> {args.output}')
+        if args.summary_output:
+            write_json(args.summary_output, {'family_count': 0, 'families': []})
+            print(f'wrote dataset family summary -> {args.summary_output}')
         return
     if 'full_path' in rows[0]:
         files = inventory_from_scan_jsonl(args.input)
@@ -129,7 +136,28 @@ def _cmd_datasus_datasets(args: argparse.Namespace) -> None:
     datasets = build_dataset_families(files, schema_signatures=schema_signatures)
     write_json(args.output, [row.to_dict() for row in datasets])
     print(f'wrote {len(datasets)} dataset families -> {args.output}')
+    if args.summary_output:
+        summary = build_dataset_family_summary(files, datasets)
+        write_json(args.summary_output, summary)
+        print(f'wrote dataset family summary -> {args.summary_output}')
 
+def _cmd_datasus_family_audit(args: argparse.Namespace) -> None:
+    families = _load_json(args.families)
+    payload = build_family_audit(families, family_id=args.family_id, only_issues=args.only_issues)
+    write_json(args.output, payload)
+    print(f'wrote family audit -> {args.output}')
+
+
+def _cmd_datasus_download_pdfs(args: argparse.Namespace) -> None:
+    plans = plan_pdf_downloads_from_scan(args.scan_jsonl, endpoint=args.endpoint, root=args.root)
+    results = download_plans(plans, overwrite=args.overwrite, dry_run=args.dry_run)
+    write_json(args.output, results)
+    print(f'wrote {len(results)} pdf download rows -> {args.output}')
+    if args.audit_output:
+        families = _load_json(args.families) if args.families else None
+        audit = build_pdf_audit(args.scan_jsonl, endpoint=args.endpoint, families=families)
+        write_json(args.audit_output, audit)
+        print(f'wrote pdf audit -> {args.audit_output}')
 
 def _cmd_datasus_family_registry(args: argparse.Namespace) -> None:
     families = _load_json(args.families)
@@ -436,7 +464,15 @@ def build_parser() -> argparse.ArgumentParser:
     datasets.add_argument('input', help='Inventory JSONL or scan JSONL')
     datasets.add_argument('output')
     datasets.add_argument('--profile-jsonl', default=None)
+    datasets.add_argument('--summary-output', default=None)
     datasets.set_defaults(func=_cmd_datasus_datasets)
+    
+    family_audit = datasus_sub.add_parser('family-audit')
+    family_audit.add_argument('families')
+    family_audit.add_argument('output')
+    family_audit.add_argument('--family-id', default=None)
+    family_audit.add_argument('--only-issues', action='store_true')
+    family_audit.set_defaults(func=_cmd_datasus_family_audit)
 
     family_registry = datasus_sub.add_parser('family-registry')
     family_registry.add_argument('families')
@@ -467,6 +503,17 @@ def build_parser() -> argparse.ArgumentParser:
     download_docs.add_argument('--overwrite', action='store_true')
     download_docs.add_argument('--dry-run', action='store_true')
     download_docs.set_defaults(func=_cmd_datasus_download_docs)
+    
+    download_pdfs = datasus_sub.add_parser('download-pdfs')
+    download_pdfs.add_argument('scan_jsonl')
+    download_pdfs.add_argument('output')
+    download_pdfs.add_argument('--endpoint', default='/dissemin/publicos')
+    download_pdfs.add_argument('--root', default=None)
+    download_pdfs.add_argument('--families', default=None)
+    download_pdfs.add_argument('--audit-output', default=None)
+    download_pdfs.add_argument('--overwrite', action='store_true')
+    download_pdfs.add_argument('--dry-run', action='store_true')
+    download_pdfs.set_defaults(func=_cmd_datasus_download_pdfs)
 
     doc_registry = datasus_sub.add_parser('doc-registry')
     doc_registry.add_argument('families')

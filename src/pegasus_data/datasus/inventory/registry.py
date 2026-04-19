@@ -8,6 +8,7 @@ from typing import Any
 class FamilyRegistryEntry:
     family_id: str
     system_guess: str | None
+    source_systems: list[str]
     series_prefix: str | None
     partition_type: str
     date_format: str | None
@@ -18,6 +19,10 @@ class FamilyRegistryEntry:
     source_paths: list[str]
     geo_coverage: list[str]
     path_semantics: dict[str, str]
+    format_families: list[str]
+    primary_extensions: list[str]
+    physical_variants: list[dict[str, Any]]
+    preferred_working_series: dict[str, Any]
     schema_signatures: list[str]
     variable_count: int
     variables: list[str]
@@ -51,6 +56,7 @@ def build_family_registry(
         out.append(FamilyRegistryEntry(
             family_id=str(family.get('family_id') or ''),
             system_guess=family.get('system_guess'),
+            source_systems=list(family.get('source_systems') or []),
             series_prefix=family.get('series_prefix'),
             partition_type=str(family.get('partition_type') or 'Unknown'),
             date_format=family.get('date_format'),
@@ -61,6 +67,10 @@ def build_family_registry(
             source_paths=list(family.get('source_paths') or []),
             geo_coverage=list(family.get('geo_coverage') or []),
             path_semantics=dict(family.get('path_semantics') or {}),
+            format_families=list(family.get('format_families') or []),
+            primary_extensions=list(family.get('primary_extensions') or []),
+            physical_variants=list(family.get('physical_variants') or []),
+            preferred_working_series=dict(family.get('preferred_working_series') or {}),
             schema_signatures=list(family.get('schema_signatures') or []),
             variable_count=len(family_vars),
             variables=sorted(family_vars),

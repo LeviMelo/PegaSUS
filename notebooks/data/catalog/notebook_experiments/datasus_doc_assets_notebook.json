@@ -1,0 +1,1076 @@
+[
+  {
+    "path": "/dissemin/publicos/EXTR ESP/Nota_Tecnica_Valores_absolutos.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/EXTR ESP/Nota_Tecnica_Valores_absolutos.pdf",
+    "filename": "Nota_Tecnica_Valores_absolutos.pdf",
+    "directory": "/dissemin/publicos/EXTR ESP",
+    "system": "EXTR ESP",
+    "subsystem": "Nota_Tecnica_Valores_absolutos.pdf",
+    "distribution_root": "EXTR ESP",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/ESUSNOTIFICA/AUXILIAR/TAB_SINANNOTIFICA.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/ESUSNOTIFICA/AUXILIAR/TAB_SINANNOTIFICA.zip",
+    "filename": "TAB_SINANNOTIFICA.zip",
+    "directory": "/dissemin/publicos/ESUSNOTIFICA/AUXILIAR",
+    "system": "ESUSNOTIFICA",
+    "subsystem": "TAB_SINANNOTIFICA.zip",
+    "distribution_root": "ESUSNOTIFICA",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/ESUSNOTIFICA/DOCS/Dicionario_de_Dados_Doenca_de_Chagas_Cronica.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/ESUSNOTIFICA/DOCS/Dicionario_de_Dados_Doenca_de_Chagas_Cronica.pdf",
+    "filename": "Dicionario_de_Dados_Doenca_de_Chagas_Cronica.pdf",
+    "directory": "/dissemin/publicos/ESUSNOTIFICA/DOCS",
+    "system": "ESUSNOTIFICA",
+    "subsystem": "Dicionario_de_Dados_Doenca_de_Chagas_Cronica.pdf",
+    "distribution_root": "ESUSNOTIFICA",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dicionario"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/ESUSNOTIFICA/DOCS/Nota_Informativa_Doenca_de_Chagas_Cronica.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/ESUSNOTIFICA/DOCS/Nota_Informativa_Doenca_de_Chagas_Cronica.pdf",
+    "filename": "Nota_Informativa_Doenca_de_Chagas_Cronica.pdf",
+    "directory": "/dissemin/publicos/ESUSNOTIFICA/DOCS",
+    "system": "ESUSNOTIFICA",
+    "subsystem": "Nota_Informativa_Doenca_de_Chagas_Cronica.pdf",
+    "distribution_root": "ESUSNOTIFICA",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/CMD/Auxiliar/Tab_CMD.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CMD/Auxiliar/Tab_CMD.zip",
+    "filename": "Tab_CMD.zip",
+    "directory": "/dissemin/publicos/CMD/Auxiliar",
+    "system": "CMD",
+    "subsystem": "Tab_CMD.zip",
+    "distribution_root": "CMD",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CMD/Doc/IT_CMD_1806_publico.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CMD/Doc/IT_CMD_1806_publico.pdf",
+    "filename": "IT_CMD_1806_publico.pdf",
+    "directory": "/dissemin/publicos/CMD/Doc",
+    "system": "CMD",
+    "subsystem": "IT_CMD_1806_publico.pdf",
+    "distribution_root": "CMD",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/painel_oncologia/Auxiliar/PAINEL_ONCOLOGIA.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/painel_oncologia/Auxiliar/PAINEL_ONCOLOGIA.zip",
+    "filename": "PAINEL_ONCOLOGIA.zip",
+    "directory": "/dissemin/publicos/painel_oncologia/Auxiliar",
+    "system": "painel_oncologia",
+    "subsystem": "PAINEL_ONCOLOGIA.zip",
+    "distribution_root": "painel_oncologia",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/painel_oncologia/Doc/Dicionario_Painel_Oncologia.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/painel_oncologia/Doc/Dicionario_Painel_Oncologia.pdf",
+    "filename": "Dicionario_Painel_Oncologia.pdf",
+    "directory": "/dissemin/publicos/painel_oncologia/Doc",
+    "system": "painel_oncologia",
+    "subsystem": "Dicionario_Painel_Oncologia.pdf",
+    "distribution_root": "painel_oncologia",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dicionario"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/IBGE/Auxiliar/TAB_POP.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/IBGE/Auxiliar/TAB_POP.zip",
+    "filename": "TAB_POP.zip",
+    "directory": "/dissemin/publicos/IBGE/Auxiliar",
+    "system": "IBGE",
+    "subsystem": "TAB_POP.zip",
+    "distribution_root": "IBGE",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/IBGE/doc/NT-POPULACAO-RESIDENTE-2000-2024.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/IBGE/doc/NT-POPULACAO-RESIDENTE-2000-2024.pdf",
+    "filename": "NT-POPULACAO-RESIDENTE-2000-2024.pdf",
+    "directory": "/dissemin/publicos/IBGE/doc",
+    "system": "IBGE",
+    "subsystem": "NT-POPULACAO-RESIDENTE-2000-2024.pdf",
+    "distribution_root": "IBGE",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/IBGE/doc/populacao.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/IBGE/doc/populacao.pdf",
+    "filename": "populacao.pdf",
+    "directory": "/dissemin/publicos/IBGE/doc",
+    "system": "IBGE",
+    "subsystem": "populacao.pdf",
+    "distribution_root": "IBGE",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/IBGE/doc/Pop_Residente_TCU_2024.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/IBGE/doc/Pop_Residente_TCU_2024.pdf",
+    "filename": "Pop_Residente_TCU_2024.pdf",
+    "directory": "/dissemin/publicos/IBGE/doc",
+    "system": "IBGE",
+    "subsystem": "Pop_Residente_TCU_2024.pdf",
+    "distribution_root": "IBGE",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/IBGE/doc/Pop_Residente_TCU_ate_2023.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/IBGE/doc/Pop_Residente_TCU_ate_2023.pdf",
+    "filename": "Pop_Residente_TCU_ate_2023.pdf",
+    "directory": "/dissemin/publicos/IBGE/doc",
+    "system": "IBGE",
+    "subsystem": "Pop_Residente_TCU_ate_2023.pdf",
+    "distribution_root": "IBGE",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/PCE/Auxiliar/tab_pce.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PCE/Auxiliar/tab_pce.zip",
+    "filename": "tab_pce.zip",
+    "directory": "/dissemin/publicos/PCE/Auxiliar",
+    "system": "PCE",
+    "subsystem": "tab_pce.zip",
+    "distribution_root": "PCE",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/PCE/DOCS/DIC_DADOS_SISPCE_PCE-DG.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PCE/DOCS/DIC_DADOS_SISPCE_PCE-DG.pdf",
+    "filename": "DIC_DADOS_SISPCE_PCE-DG.pdf",
+    "directory": "/dissemin/publicos/PCE/DOCS",
+    "system": "PCE",
+    "subsystem": "DIC_DADOS_SISPCE_PCE-DG.pdf",
+    "distribution_root": "PCE",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dic_dados"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/Imun_cobertura_desde_1994.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/Imun_cobertura_desde_1994.pdf",
+    "filename": "Imun_cobertura_desde_1994.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "Imun_cobertura_desde_1994.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/Imun_doses_aplic_desde_1994.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/Imun_doses_aplic_desde_1994.pdf",
+    "filename": "Imun_doses_aplic_desde_1994.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "Imun_doses_aplic_desde_1994.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/notatecnica.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/notatecnica.pdf",
+    "filename": "notatecnica.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "notatecnica.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/notatecnicaCobertura.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/notatecnicaCobertura.pdf",
+    "filename": "notatecnicaCobertura.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "notatecnicaCobertura.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/notatecnicaTx.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/notatecnicaTx.pdf",
+    "filename": "notatecnicaTx.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "notatecnicaTx.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/Nota_Tecnica_Imunizacoes_Cobertura_desde_1994.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/Nota_Tecnica_Imunizacoes_Cobertura_desde_1994.pdf",
+    "filename": "Nota_Tecnica_Imunizacoes_Cobertura_desde_1994.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "Nota_Tecnica_Imunizacoes_Cobertura_desde_1994.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/Nota_Tecnica_Imunizacoes_Doses_aplicadas_desde_1994.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/Nota_Tecnica_Imunizacoes_Doses_aplicadas_desde_1994.pdf",
+    "filename": "Nota_Tecnica_Imunizacoes_Doses_aplicadas_desde_1994.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "Nota_Tecnica_Imunizacoes_Doses_aplicadas_desde_1994.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/PNI/DOCS/Regrascobertura2013.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/PNI/DOCS/Regrascobertura2013.pdf",
+    "filename": "Regrascobertura2013.pdf",
+    "directory": "/dissemin/publicos/PNI/DOCS",
+    "system": "PNI",
+    "subsystem": "Regrascobertura2013.pdf",
+    "distribution_root": "PNI",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/RESP/AUXILIAR/tabresp.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/RESP/AUXILIAR/tabresp.zip",
+    "filename": "tabresp.zip",
+    "directory": "/dissemin/publicos/RESP/AUXILIAR",
+    "system": "RESP",
+    "subsystem": "tabresp.zip",
+    "distribution_root": "RESP",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/RESP/DOCS/DIC_DADOS_RESP.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/RESP/DOCS/DIC_DADOS_RESP.pdf",
+    "filename": "DIC_DADOS_RESP.pdf",
+    "directory": "/dissemin/publicos/RESP/DOCS",
+    "system": "RESP",
+    "subsystem": "DIC_DADOS_RESP.pdf",
+    "distribution_root": "RESP",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dic_dados"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/AUXILIAR/POPT_Estimativa_TCU_2019_Sinan.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/AUXILIAR/POPT_Estimativa_TCU_2019_Sinan.zip",
+    "filename": "POPT_Estimativa_TCU_2019_Sinan.zip",
+    "directory": "/dissemin/publicos/SINAN/AUXILIAR",
+    "system": "SINAN",
+    "subsystem": "POPT_Estimativa_TCU_2019_Sinan.zip",
+    "distribution_root": "SINAN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/AUXILIAR/TAB_SINANNET.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/AUXILIAR/TAB_SINANNET.zip",
+    "filename": "TAB_SINANNET.zip",
+    "directory": "/dissemin/publicos/SINAN/AUXILIAR",
+    "system": "SINAN",
+    "subsystem": "TAB_SINANNET.zip",
+    "distribution_root": "SINAN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/AUXILIAR/TAB_SINANONLINE.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/AUXILIAR/TAB_SINANONLINE.zip",
+    "filename": "TAB_SINANONLINE.zip",
+    "directory": "/dissemin/publicos/SINAN/AUXILIAR",
+    "system": "SINAN",
+    "subsystem": "TAB_SINANONLINE.zip",
+    "distribution_root": "SINAN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Docs_TAB_SINAN.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Docs_TAB_SINAN.zip",
+    "filename": "Docs_TAB_SINAN.zip",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Docs_TAB_SINAN.zip",
+    "distribution_root": "SINAN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "docs_tab"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Doenca_de_Creutzfeldt-Jakob(DCJ).pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Doenca_de_Creutzfeldt-Jakob(DCJ).pdf",
+    "filename": "Nota_Tecnica_Doenca_de_Creutzfeldt-Jakob(DCJ).pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Nota_Tecnica_Doenca_de_Creutzfeldt-Jakob(DCJ).pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Intoxicacao_Exogena.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Intoxicacao_Exogena.pdf",
+    "filename": "Nota_Tecnica_Intoxicacao_Exogena.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Nota_Tecnica_Intoxicacao_Exogena.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Rotavirus.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Rotavirus.pdf",
+    "filename": "Nota_Tecnica_Rotavirus.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Nota_Tecnica_Rotavirus.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Surtos_de_DTA.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Surtos_de_DTA.pdf",
+    "filename": "Nota_Tecnica_Surtos_de_DTA.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Nota_Tecnica_Surtos_de_DTA.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Toxoplasmose.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/Nota_Tecnica_Toxoplasmose.pdf",
+    "filename": "Nota_Tecnica_Toxoplasmose.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "Nota_Tecnica_Toxoplasmose.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "nota"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/POP_III_Instalacao_do_tabulador_TabWin_3.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/POP_III_Instalacao_do_tabulador_TabWin_3.pdf",
+    "filename": "POP_III_Instalacao_do_tabulador_TabWin_3.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "POP_III_Instalacao_do_tabulador_TabWin_3.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/POP_II_Descompactacao_expansao_conversao_3.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/POP_II_Descompactacao_expansao_conversao_3.pdf",
+    "filename": "POP_II_Descompactacao_expansao_conversao_3.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "POP_II_Descompactacao_expansao_conversao_3.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINAN/DOCS/POP_I_Acesso_a_Microdados_5.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DOCS/POP_I_Acesso_a_Microdados_5.pdf",
+    "filename": "POP_I_Acesso_a_Microdados_5.pdf",
+    "directory": "/dissemin/publicos/SINAN/DOCS",
+    "system": "SINAN",
+    "subsystem": "POP_I_Acesso_a_Microdados_5.pdf",
+    "distribution_root": "SINAN",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABDOS/DOC/DOCS-TABDOS.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABDOS/DOC/DOCS-TABDOS.zip",
+    "filename": "DOCS-TABDOS.zip",
+    "directory": "/dissemin/publicos/TABDOS/DOC",
+    "system": "TABDOS",
+    "subsystem": "DOCS-TABDOS.zip",
+    "distribution_root": "TABDOS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABNET/DOC/DOCS-TABNET.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABNET/DOC/DOCS-TABNET.zip",
+    "filename": "DOCS-TABNET.zip",
+    "directory": "/dissemin/publicos/TABNET/DOC",
+    "system": "TABNET",
+    "subsystem": "DOCS-TABNET.zip",
+    "distribution_root": "TABNET",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABWIN/Doc/DOCS-TABDOS.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABWIN/Doc/DOCS-TABDOS.zip",
+    "filename": "DOCS-TABDOS.zip",
+    "directory": "/dissemin/publicos/TABWIN/Doc",
+    "system": "TABWIN",
+    "subsystem": "DOCS-TABDOS.zip",
+    "distribution_root": "TABWIN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABWIN/Doc/Docs-TABWIN.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABWIN/Doc/Docs-TABWIN.zip",
+    "filename": "Docs-TABWIN.zip",
+    "directory": "/dissemin/publicos/TABWIN/Doc",
+    "system": "TABWIN",
+    "subsystem": "Docs-TABWIN.zip",
+    "distribution_root": "TABWIN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABWIN/Programa/Instalador-TABWIN415.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABWIN/Programa/Instalador-TABWIN415.zip",
+    "filename": "Instalador-TABWIN415.zip",
+    "directory": "/dissemin/publicos/TABWIN/Programa",
+    "system": "TABWIN",
+    "subsystem": "Instalador-TABWIN415.zip",
+    "distribution_root": "TABWIN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABWIN/Programa/TabHelpHtm.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABWIN/Programa/TabHelpHtm.zip",
+    "filename": "TabHelpHtm.zip",
+    "directory": "/dissemin/publicos/TABWIN/Programa",
+    "system": "TABWIN",
+    "subsystem": "TabHelpHtm.zip",
+    "distribution_root": "TABWIN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/TABWIN/Programa/VERDBF.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/TABWIN/Programa/VERDBF.zip",
+    "filename": "VERDBF.zip",
+    "directory": "/dissemin/publicos/TABWIN/Programa",
+    "system": "TABWIN",
+    "subsystem": "VERDBF.zip",
+    "distribution_root": "TABWIN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CIHA/201101_/Auxiliar/TAB_CIHA.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CIHA/201101_/Auxiliar/TAB_CIHA.zip",
+    "filename": "TAB_CIHA.zip",
+    "directory": "/dissemin/publicos/CIHA/201101_/Auxiliar",
+    "system": "CIHA",
+    "subsystem": "TAB_CIHA.zip",
+    "distribution_root": "CIHA",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CIHA/201101_/Doc/Layout_Arquivos_CIHA.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CIHA/201101_/Doc/Layout_Arquivos_CIHA.pdf",
+    "filename": "Layout_Arquivos_CIHA.pdf",
+    "directory": "/dissemin/publicos/CIHA/201101_/Doc",
+    "system": "CIHA",
+    "subsystem": "Layout_Arquivos_CIHA.pdf",
+    "distribution_root": "CIHA",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "layout"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/CNES/200508_/Auxiliar/TAB_CNES.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CNES/200508_/Auxiliar/TAB_CNES.zip",
+    "filename": "TAB_CNES.zip",
+    "directory": "/dissemin/publicos/CNES/200508_/Auxiliar",
+    "system": "CNES",
+    "subsystem": "TAB_CNES.zip",
+    "distribution_root": "CNES",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CNES/200508_/doc/IT_CNES_1706.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CNES/200508_/doc/IT_CNES_1706.pdf",
+    "filename": "IT_CNES_1706.pdf",
+    "directory": "/dissemin/publicos/CNES/200508_/doc",
+    "system": "CNES",
+    "subsystem": "IT_CNES_1706.pdf",
+    "distribution_root": "CNES",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CIH/200801_201012/Auxiliar/TAB_CIH.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CIH/200801_201012/Auxiliar/TAB_CIH.zip",
+    "filename": "TAB_CIH.zip",
+    "directory": "/dissemin/publicos/CIH/200801_201012/Auxiliar",
+    "system": "CIH",
+    "subsystem": "TAB_CIH.zip",
+    "distribution_root": "CIH",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CMD/201701_/Auxiliar/Tab_CMD.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CMD/201701_/Auxiliar/Tab_CMD.zip",
+    "filename": "Tab_CMD.zip",
+    "directory": "/dissemin/publicos/CMD/201701_/Auxiliar",
+    "system": "CMD",
+    "subsystem": "Tab_CMD.zip",
+    "distribution_root": "CMD",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/CMD/201701_/Doc/IT_CMD_1806_publico.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/CMD/201701_/Doc/IT_CMD_1806_publico.pdf",
+    "filename": "IT_CMD_1806_publico.pdf",
+    "directory": "/dissemin/publicos/CMD/201701_/Doc",
+    "system": "CMD",
+    "subsystem": "IT_CMD_1806_publico.pdf",
+    "distribution_root": "CMD",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/Dados_Abertos/SINAN/Chikungunya/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/Dados_Abertos/SINAN/Chikungunya/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "filename": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "directory": "/dissemin/publicos/Dados_Abertos/SINAN/Chikungunya",
+    "system": "SINAN",
+    "subsystem": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "distribution_root": "Dados_Abertos",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dic_dados"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/Dados_Abertos/SINAN/Dengue/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/Dados_Abertos/SINAN/Dengue/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "filename": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "directory": "/dissemin/publicos/Dados_Abertos/SINAN/Dengue",
+    "system": "SINAN",
+    "subsystem": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "distribution_root": "Dados_Abertos",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dic_dados"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA.zip",
+    "filename": "TAB_SIA.zip",
+    "directory": "/dissemin/publicos/SIASUS/200801_/Auxiliar",
+    "system": "SIASUS",
+    "subsystem": "TAB_SIA.zip",
+    "distribution_root": "SIASUS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_199407-199910.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_199407-199910.zip",
+    "filename": "TAB_SIA_199407-199910.zip",
+    "directory": "/dissemin/publicos/SIASUS/200801_/Auxiliar",
+    "system": "SIASUS",
+    "subsystem": "TAB_SIA_199407-199910.zip",
+    "distribution_root": "SIASUS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_199911-200307.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_199911-200307.zip",
+    "filename": "TAB_SIA_199911-200307.zip",
+    "directory": "/dissemin/publicos/SIASUS/200801_/Auxiliar",
+    "system": "SIASUS",
+    "subsystem": "TAB_SIA_199911-200307.zip",
+    "distribution_root": "SIASUS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_200308-200712.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/Auxiliar/TAB_SIA_200308-200712.zip",
+    "filename": "TAB_SIA_200308-200712.zip",
+    "directory": "/dissemin/publicos/SIASUS/200801_/Auxiliar",
+    "system": "SIASUS",
+    "subsystem": "TAB_SIA_200308-200712.zip",
+    "distribution_root": "SIASUS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIASUS/200801_/Doc/Informe_Tecnico_SIASUS_2019_07.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/Doc/Informe_Tecnico_SIASUS_2019_07.pdf",
+    "filename": "Informe_Tecnico_SIASUS_2019_07.pdf",
+    "directory": "/dissemin/publicos/SIASUS/200801_/Doc",
+    "system": "SIASUS",
+    "subsystem": "Informe_Tecnico_SIASUS_2019_07.pdf",
+    "distribution_root": "SIASUS",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/Dados_Abertos/SINAN/Zikavirus/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/Dados_Abertos/SINAN/Zikavirus/DIC_DADOS_CHIKUNGUNYA.pdf",
+    "filename": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "directory": "/dissemin/publicos/Dados_Abertos/SINAN/Zikavirus",
+    "system": "SINAN",
+    "subsystem": "DIC_DADOS_CHIKUNGUNYA.pdf",
+    "distribution_root": "Dados_Abertos",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "dic_dados"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Docs_Tabs_CID10.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Docs_Tabs_CID10.zip",
+    "filename": "Docs_Tabs_CID10.zip",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Docs_Tabs_CID10.zip",
+    "distribution_root": "SIM",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "docs_tab"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Estrutura_do_SIM_2025.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Estrutura_do_SIM_2025.pdf",
+    "filename": "Estrutura_do_SIM_2025.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Estrutura_do_SIM_2025.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "estrutura"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Estrutura_SIM_Anterior.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Estrutura_SIM_Anterior.pdf",
+    "filename": "Estrutura_SIM_Anterior.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Estrutura_SIM_Anterior.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "estrutura"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Estrutura_SIM_para_CD.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Estrutura_SIM_para_CD.pdf",
+    "filename": "Estrutura_SIM_para_CD.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Estrutura_SIM_para_CD.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "estrutura"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Legislacao_PDF.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Legislacao_PDF.pdf",
+    "filename": "Legislacao_PDF.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Legislacao_PDF.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/DOCS/Portaria.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/DOCS/Portaria.pdf",
+    "filename": "Portaria.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/DOCS",
+    "system": "SIM",
+    "subsystem": "Portaria.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/TAB/OBITOS_CID10_TAB.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/TAB/OBITOS_CID10_TAB.zip",
+    "filename": "OBITOS_CID10_TAB.zip",
+    "directory": "/dissemin/publicos/SIM/CID10/TAB",
+    "system": "SIM",
+    "subsystem": "OBITOS_CID10_TAB.zip",
+    "distribution_root": "SIM",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/TABELAS/CADMUN.xls",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/TABELAS/CADMUN.xls",
+    "filename": "CADMUN.xls",
+    "directory": "/dissemin/publicos/SIM/CID10/TABELAS",
+    "system": "SIM",
+    "subsystem": "CADMUN.xls",
+    "distribution_root": "SIM",
+    "format_family": "unknown",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID10/TABELAS/Tabela-de-Municipios-informacoes.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID10/TABELAS/Tabela-de-Municipios-informacoes.pdf",
+    "filename": "Tabela-de-Municipios-informacoes.pdf",
+    "directory": "/dissemin/publicos/SIM/CID10/TABELAS",
+    "system": "SIM",
+    "subsystem": "Tabela-de-Municipios-informacoes.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SISPRENATAL/201201_/Auxiliar/TAB_SISPRENATAL.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SISPRENATAL/201201_/Auxiliar/TAB_SISPRENATAL.zip",
+    "filename": "TAB_SISPRENATAL.zip",
+    "directory": "/dissemin/publicos/SISPRENATAL/201201_/Auxiliar",
+    "system": "SISPRENATAL",
+    "subsystem": "TAB_SISPRENATAL.zip",
+    "distribution_root": "SISPRENATAL",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID9/DOCS/Docs-Tabs-CID9.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID9/DOCS/Docs-Tabs-CID9.zip",
+    "filename": "Docs-Tabs-CID9.zip",
+    "directory": "/dissemin/publicos/SIM/CID9/DOCS",
+    "system": "SIM",
+    "subsystem": "Docs-Tabs-CID9.zip",
+    "distribution_root": "SIM",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID9/DOCS/INTRO.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID9/DOCS/INTRO.pdf",
+    "filename": "INTRO.pdf",
+    "directory": "/dissemin/publicos/SIM/CID9/DOCS",
+    "system": "SIM",
+    "subsystem": "INTRO.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID9/DOCS/MORT98.HLP",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID9/DOCS/MORT98.HLP",
+    "filename": "MORT98.HLP",
+    "directory": "/dissemin/publicos/SIM/CID9/DOCS",
+    "system": "SIM",
+    "subsystem": "MORT98.HLP",
+    "distribution_root": "SIM",
+    "format_family": "unknown",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID9/DOCS/MTAB16M.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID9/DOCS/MTAB16M.pdf",
+    "filename": "MTAB16M.pdf",
+    "directory": "/dissemin/publicos/SIM/CID9/DOCS",
+    "system": "SIM",
+    "subsystem": "MTAB16M.pdf",
+    "distribution_root": "SIM",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIM/CID9/TAB/OBITOS_CID9_TAB.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIM/CID9/TAB/OBITOS_CID9_TAB.zip",
+    "filename": "OBITOS_CID9_TAB.zip",
+    "directory": "/dissemin/publicos/SIM/CID9/TAB",
+    "system": "SIM",
+    "subsystem": "OBITOS_CID9_TAB.zip",
+    "distribution_root": "SIM",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1996_/Auxiliar/Arq_Para_Tabulacao_A_Partir_1996.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1996_/Auxiliar/Arq_Para_Tabulacao_A_Partir_1996.zip",
+    "filename": "Arq_Para_Tabulacao_A_Partir_1996.zip",
+    "directory": "/dissemin/publicos/SINASC/1996_/Auxiliar",
+    "system": "SINASC",
+    "subsystem": "Arq_Para_Tabulacao_A_Partir_1996.zip",
+    "distribution_root": "SINASC",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1996_/Doc/Estrutura_SINASC_anterior.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1996_/Doc/Estrutura_SINASC_anterior.pdf",
+    "filename": "Estrutura_SINASC_anterior.pdf",
+    "directory": "/dissemin/publicos/SINASC/1996_/Doc",
+    "system": "SINASC",
+    "subsystem": "Estrutura_SINASC_anterior.pdf",
+    "distribution_root": "SINASC",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "estrutura"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1996_/Doc/Estrutura_SINASC_para_CD.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1996_/Doc/Estrutura_SINASC_para_CD.pdf",
+    "filename": "Estrutura_SINASC_para_CD.pdf",
+    "directory": "/dissemin/publicos/SINASC/1996_/Doc",
+    "system": "SINASC",
+    "subsystem": "Estrutura_SINASC_para_CD.pdf",
+    "distribution_root": "SINASC",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": [
+      "estrutura"
+    ]
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1996_/Doc/Legislacao_PDF.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1996_/Doc/Legislacao_PDF.pdf",
+    "filename": "Legislacao_PDF.pdf",
+    "directory": "/dissemin/publicos/SINASC/1996_/Doc",
+    "system": "SINASC",
+    "subsystem": "Legislacao_PDF.pdf",
+    "distribution_root": "SINASC",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1996_/Doc/Portaria.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1996_/Doc/Portaria.pdf",
+    "filename": "Portaria.pdf",
+    "directory": "/dissemin/publicos/SINASC/1996_/Doc",
+    "system": "SINASC",
+    "subsystem": "Portaria.pdf",
+    "distribution_root": "SINASC",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/1994_1995/Auxiliar/Arq_Para_Tabulacao_Ate_1995.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/1994_1995/Auxiliar/Arq_Para_Tabulacao_Ate_1995.zip",
+    "filename": "Arq_Para_Tabulacao_Ate_1995.zip",
+    "directory": "/dissemin/publicos/SINASC/1994_1995/Auxiliar",
+    "system": "SINASC",
+    "subsystem": "Arq_Para_Tabulacao_Ate_1995.zip",
+    "distribution_root": "SINASC",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/NOV/TAB/NASC_NOV_TAB.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/NOV/TAB/NASC_NOV_TAB.zip",
+    "filename": "NASC_NOV_TAB.zip",
+    "directory": "/dissemin/publicos/SINASC/NOV/TAB",
+    "system": "SINASC",
+    "subsystem": "NASC_NOV_TAB.zip",
+    "distribution_root": "SINASC",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SINASC/ANT/TAB/NASC_ANT_TAB.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SINASC/ANT/TAB/NASC_ANT_TAB.zip",
+    "filename": "NASC_ANT_TAB.zip",
+    "directory": "/dissemin/publicos/SINASC/ANT/TAB",
+    "system": "SINASC",
+    "subsystem": "NASC_ANT_TAB.zip",
+    "distribution_root": "SINASC",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIHSUS/199201_200712/Auxiliar/TAB_SIH_199201-199712.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIHSUS/199201_200712/Auxiliar/TAB_SIH_199201-199712.zip",
+    "filename": "TAB_SIH_199201-199712.zip",
+    "directory": "/dissemin/publicos/SIHSUS/199201_200712/Auxiliar",
+    "system": "SIHSUS",
+    "subsystem": "TAB_SIH_199201-199712.zip",
+    "distribution_root": "SIHSUS",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SIHSUS/200801_/Doc/IT_SIHSUS_1603.pdf",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SIHSUS/200801_/Doc/IT_SIHSUS_1603.pdf",
+    "filename": "IT_SIHSUS_1603.pdf",
+    "directory": "/dissemin/publicos/SIHSUS/200801_/Doc",
+    "system": "SIHSUS",
+    "subsystem": "IT_SIHSUS_1603.pdf",
+    "distribution_root": "SIHSUS",
+    "format_family": "pdf",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  },
+  {
+    "path": "/dissemin/publicos/SISCAN/SISMAMA/Auxiliar/TAB_SISMAMA.zip",
+    "url": "ftp://ftp.datasus.gov.br/dissemin/publicos/SISCAN/SISMAMA/Auxiliar/TAB_SISMAMA.zip",
+    "filename": "TAB_SISMAMA.zip",
+    "directory": "/dissemin/publicos/SISCAN/SISMAMA/Auxiliar",
+    "system": "SISCAN",
+    "subsystem": "TAB_SISMAMA.zip",
+    "distribution_root": "SISCAN",
+    "format_family": "archive",
+    "doc_scope_hint": "subsystem",
+    "keyword_hits": []
+  }
+]

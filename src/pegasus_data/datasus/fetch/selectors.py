@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
-from ..discovery.heuristics import format_normalized_date, infer_format_family, infer_pattern_components, infer_primary_extension, is_probably_structured_data, normalize_datecode
+from ..discovery.heuristics import format_normalized_date, infer_pattern_components, is_probably_structured_data, normalize_datecode
 
 
 @dataclass(frozen=True)
@@ -204,13 +204,16 @@ def select_family_candidates(
     max_docs: int = 5,
 ) -> FamilyCandidateSelection:
     member_files = [str(path) for path in family.get('member_files', family.get('files', [])) or []]
+    preferred_working_series = dict(family.get('preferred_working_series') or {})
+    preferred_files = [str(path) for path in preferred_working_series.get('selected_files') or []]
+    candidate_paths = preferred_files or member_files
     path_semantics = dict(family.get('path_semantics') or {})
     date_format = family.get('date_format')
     partition_type = str(family.get('partition_type') or 'Unknown')
 
     parsed_files = [
         _parse_member_file(path, date_format=date_format, path_semantics=path_semantics)
-        for path in member_files
+        for path in candidate_paths
     ]
     parsed_files = [row for row in parsed_files if is_probably_structured_data(row['source_path'])]
     parsed_files = _sort_candidates(parsed_files, prefer_br=(partition_type != 'State-Partitioned'))
